@@ -37,6 +37,7 @@ class ImageReq(BaseModel):
     project_id: str
     prompt: str
     style: str = ""
+    aspect: str = "16:9"
 
 
 class TtsReq(BaseModel):
@@ -48,6 +49,7 @@ class TtsReq(BaseModel):
 class ComposeReq(BaseModel):
     project_id: str
     scenes: list[Scene]
+    aspect: str = "16:9"
 
 
 @app.post("/api/storyboard")
@@ -68,7 +70,7 @@ def api_storyboard(req: StoryboardReq):
 def api_image(req: ImageReq):
     try:
         project_dir = _ensure_project(req.project_id)
-        filename = providers.gen_image(req.prompt, project_dir, req.style)
+        filename = providers.gen_image(req.prompt, project_dir, req.style, req.aspect)
         return {"image": filename}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
@@ -88,7 +90,8 @@ def api_tts(req: TtsReq):
 def api_compose(req: ComposeReq):
     try:
         project_dir = _ensure_project(req.project_id)
-        filename = compose.compose([s.model_dump() for s in req.scenes], project_dir)
+        filename = compose.compose([s.model_dump() for s in req.scenes],
+                                   project_dir, req.aspect)
         return {"video": "/api/file/" + req.project_id + "/" + filename}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})

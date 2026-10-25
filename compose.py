@@ -19,15 +19,17 @@ def _run(cmd):
         raise RuntimeError("ffmpeg 失败: " + r.stderr[-1500:])
 
 
-def _make_segment(image_path: str, audio_path: str, out_path: str, duration: float):
+def _make_segment(image_path: str, audio_path: str, out_path: str,
+                  duration: float, w: int, h: int):
     """单分镜片段：静态图片 + 配音，加轻微放大动画（Ken Burns）。"""
     ffmpeg = providers._ffmpeg_bin()
+    zoom = "zoompan=z='min(zoom+0.0006,1.08)':d=%d:s=%dx%d:fps=25" % (int(duration * 25), w, h)
     if audio_path:
         _run([ffmpeg, "-y",
               "-loop", "1", "-i", image_path,
               "-i", audio_path,
-              "-vf", "scale=1280:720:force_original_aspect_ratio=increase,"
-                     "crop=1280:720,zoompan=z='min(zoom+0.0006,1.08)':d=%d:s=1280x720:fps=25" % int(duration * 25),
+              "-vf", f"scale={w}:{h}:force_original_aspect_ratio=increase,"
+                     f"crop={w}:{h},{zoom}",
               "-t", str(duration),
               "-c:v", "libx264", "-pix_fmt", "yuv420p",
               "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
@@ -35,7 +37,7 @@ def _make_segment(image_path: str, audio_path: str, out_path: str, duration: flo
     else:
         _run([ffmpeg, "-y",
               "-loop", "1", "-i", image_path,
-              "-vf", "scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720",
+              "-vf", f"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}",
               "-t", str(duration),
               "-c:v", "libx264", "-pix_fmt", "yuv420p", out_path])
 
@@ -62,15 +64,16 @@ def _build_srt(scenes, durations, srt_path: str):
         f.write("\n".join(lines))
 
 
-def compose(scenes, project_dir: str) -> str:
+def compose(scenes, project_dir: str, aspect: str = "16:9") -> str:
     """合成完整视频。scenes 每项含 image/tts 文件名，返回输出视频文件名。"""
+    w, h = (720, 1280) if aspect == "9:16" else (1280, 720)
     seg_files, durations = [], []
     for i, sc in enumerate(scenes):
         img = os.path.join(project_dir, sc["image"])
         tts = os.path.join(project_dir, sc["tts"]) if sc.get("tts") else None
         dur = providers.audio_duration(tts) + 0.6 if tts else 4.0
         seg = os.path.join(project_dir, "seg_%03d.mp4" % i)
-        _make_segment(img, tts, seg, dur)
+        _make_segment(img, tts, seg, dur, w, h)
         seg_files.append(seg)
         durations.append(dur)
 

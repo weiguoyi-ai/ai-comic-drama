@@ -61,11 +61,16 @@
     <textarea id="script" placeholder="在这里粘贴你的小说片段、故事梗概或完整剧本……&#10;例如：深夜的城市里，外卖员小李接到了一个奇怪的订单，收货地址竟是一栋废弃的大楼……"></textarea>
     <div class="row">
       <select id="style">
+        <option>仙侠玄幻·唯美写实</option>
         <option>日系动漫风</option>
         <option>国风水墨</option>
         <option>美式漫画风</option>
         <option>赛博朋克</option>
         <option>治愈手绘风</option>
+      </select>
+      <select id="aspect">
+        <option value="9:16">竖屏 9:16（抖音/快手）</option>
+        <option value="16:9">横屏 16:9（B站/西瓜）</option>
       </select>
       <select id="sceneCount">
         <option value="4">4 幕</option>
@@ -171,7 +176,7 @@ async function genImage(i) {
   if (!prompt) { alert("请填写画面描述"); return; }
   tag(i, false); $("tag"+i).innerHTML = '<span class="spinner"></span>';
   try {
-    const j = await post("/api/image", {project_id: projectId, prompt, style: $("style").value});
+    const j = await post("/api/image", {project_id: projectId, prompt, style: $("style").value, aspect: $("aspect").value});
     scenes[i].image = j.image;
     $("img"+i).src = "/api/file/" + projectId + "/" + j.image + "?t=" + Date.now();
     tag(i, true);
@@ -217,7 +222,7 @@ async function composeVideo() {
   $("btnCompose").disabled = true;
   setStatus("status3", "正在合成视频（图片动画 + 配音 + 字幕），请稍候……", true);
   try {
-    const j = await post("/api/compose", {project_id: projectId, scenes});
+    const j = await post("/api/compose", {project_id: projectId, scenes, aspect: $("aspect").value});
     $("player").src = j.video; $("player").classList.remove("hidden");
     $("dlLink").href = j.video; $("dlLink").classList.remove("hidden");
     setStatus("status3", "🎉 合成完成！");

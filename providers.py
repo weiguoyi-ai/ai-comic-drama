@@ -23,6 +23,26 @@ def load_config() -> dict:
         return json.load(f)
 
 
+# ---------------------------------------------------------------- 画风预设
+
+STYLE_PRESETS = {
+    "日系动漫风": "日系动漫风格，赛璐璐上色，清晰线条，明快色彩",
+    "国风水墨": "中国风水墨画风格，留白意境，淡雅笔墨",
+    "美式漫画风": "美式漫画风格，粗线条勾勒，高对比阴影，分格张力",
+    "赛博朋克": "赛博朋克风格，霓虹夜景，雨夜都市，高科技低生活",
+    "治愈手绘风": "治愈系手绘风格，柔和笔触，暖色调，温馨氛围",
+    "仙侠玄幻·唯美写实": (
+        "中国仙侠玄幻风格，唯美写实CG质感，仙气缭绕，冰蓝色调梦幻光效，"
+        "飘逸长发与轻纱衣袂，粒子光斑与辉光点缀，电影级打光，超高细节，8k画质"
+    ),
+}
+
+
+def style_prompt(style: str) -> str:
+    """把画风名称映射为完整提示词（未知画风原样返回）。"""
+    return STYLE_PRESETS.get(style, style)
+
+
 # ---------------------------------------------------------------- LLM：剧本 → 分镜
 
 STORYBOARD_PROMPT = """你是一名专业漫画分镜师。请把下面的故事/剧本改编成 {scene_count} 个漫画分镜。
@@ -108,11 +128,14 @@ def _mock_storyboard(script: str, style: str, scene_count: int) -> dict:
 
 # ---------------------------------------------------------------- 生图
 
-def gen_image(prompt: str, project_dir: str, style: str = "") -> str:
-    """生成一张分镜图片，返回文件名。"""
+def gen_image(prompt: str, project_dir: str, style: str = "", aspect: str = "16:9") -> str:
+    """生成一张分镜图片，返回文件名。aspect: 16:9 横屏 / 9:16 竖屏"""
     cfg = load_config()["image"]
     filename = "img_%s.png" % uuid.uuid4().hex[:10]
     filepath = os.path.join(project_dir, filename)
+
+    size = "768x1344" if aspect == "9:16" else "1344x768"
+    full_prompt = f"{prompt}，{style_prompt(style)}" if style else prompt
 
     if cfg.get("mock"):
         # mock：用 ffmpeg 生成一张带提示词的纯色占位图
@@ -121,7 +144,7 @@ def gen_image(prompt: str, project_dir: str, style: str = "") -> str:
         safe = (prompt or style)[:28].replace(":", " ").replace("'", "")
         subprocess.run(
             [ffmpeg, "-y", "-f", "lavfi",
-             "-i", "color=c=0x2c3e50:s=1280x720",
+             "-i", "color=c=0x2c3e50:s=" + size,
              "-vf", f"drawtext=text='{safe}':fontcolor=white:fontsize=48:x=(w-tw)/2:y=(h-th)/2:fontfile='C\\:/Windows/Fonts/msyh.ttc'",
              "-frames:v", "1", filepath],
             check=True, capture_output=True)
@@ -131,8 +154,7 @@ def gen_image(prompt: str, project_dir: str, style: str = "") -> str:
     resp = requests.post(
         cfg["base_url"].rstrip("/") + "/images/generations",
         headers={"Authorization": "Bearer " + cfg["api_key"]},
-        json={"model": cfg["model"], "prompt": full_prompt,
-              "size": cfg.get("size", "1344x768")},
+        json={"model": cfg["model"], "prompt": full_prompt, "size": size},
         timeout=180,
     )
     resp.raise_for_status()

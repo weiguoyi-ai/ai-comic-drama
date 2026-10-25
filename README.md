@@ -61,6 +61,22 @@ python server.py
 
 其他可替换：DeepSeek、Kimi、豆包（LLM）；Flux、SD（图）等。
 
+### 🧚 追求「仙侠玄幻·唯美写实」爆款画风？
+
+内置的「仙侠玄幻·唯美写实」画风波及冰蓝色调、仙气光效等提示词，任何模型都能出效果。
+若想最大程度还原抖音上豆包系漫剧质感，推荐把 `image` 配置换成**火山方舟（即梦 Seedream）**：
+
+```json
+"image": {
+  "mock": false,
+  "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+  "api_key": "你的方舟API_KEY",
+  "model": "doubao-seedream-4-0"
+}
+```
+
+同时可在界面选择 **竖屏 9:16** 输出，与参考视频一致。
+
 ## 📁 项目结构
 
 ```
