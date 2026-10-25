@@ -1,0 +1,15 @@
+{
+  "llm": {
+    "mock": true,
+    "base_url": "https://open.bigmodel.cn/api/paas/v4",
+    "api_key": "你的API_KEY",
+    "model": "glm-4-flash"
+  },
+  "image": {
+    "mock": true,
+    "base_url": "https://open.bigmodel.cn/api/paas/v4",
+    "api_key": "你的API_KEY",
+    "model": "cogview-3-flash",
+    "size": "1344x768"
+  }
+}

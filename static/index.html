@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 漫剧工坊</title>
+<style>
+  :root {
+    --bg: #f6f7fb; --card: #ffffff; --border: #e4e7ef;
+    --text: #1f2430; --muted: #7a8199; --primary: #4f5df0; --primary-dark: #3d4bd6;
+    --ok: #18a058; --warn: #f0a020;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: "Microsoft YaHei", system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  header { background: linear-gradient(135deg, #4f5df0, #8b5cf6); color: #fff; padding: 28px 32px; }
+  header h1 { font-size: 24px; margin-bottom: 6px; }
+  header p { opacity: .85; font-size: 14px; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 24px 20px 80px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 22px; margin-bottom: 20px; box-shadow: 0 1px 3px rgba(20,25,60,.05); }
+  .card h2 { font-size: 17px; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .step-num { display: inline-flex; width: 24px; height: 24px; border-radius: 50%; background: var(--primary); color: #fff; font-size: 13px; align-items: center; justify-content: center; }
+  textarea { width: 100%; min-height: 180px; border: 1px solid var(--border); border-radius: 10px; padding: 12px; font-size: 14px; font-family: inherit; resize: vertical; }
+  textarea:focus, select:focus { outline: 2px solid #c3c8ff; }
+  .row { display: flex; gap: 12px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+  select, input[type=text] { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 14px; background: #fff; }
+  .hint { color: var(--muted); font-size: 12.5px; }
+  button { border: none; border-radius: 9px; padding: 10px 20px; font-size: 14px; cursor: pointer; font-family: inherit; transition: .15s; }
+  .btn-primary { background: var(--primary); color: #fff; }
+  .btn-primary:hover { background: var(--primary-dark); }
+  .btn-primary:disabled, .btn-ghost:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-ghost { background: #eef0ff; color: var(--primary); }
+  .btn-ghost:hover { background: #e0e4ff; }
+  .scene { border: 1px solid var(--border); border-radius: 12px; padding: 16px; margin-bottom: 14px; display: flex; gap: 16px; }
+  .scene-img { width: 220px; height: 124px; border-radius: 8px; background: #eceef5; object-fit: cover; flex-shrink: 0; }
+  .scene-body { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+  .scene-body label { font-size: 12px; color: var(--muted); }
+  .scene-body input, .scene-body textarea { border: 1px solid var(--border); border-radius: 7px; padding: 7px 9px; font-size: 13px; font-family: inherit; width: 100%; }
+  .scene-body textarea { min-height: 44px; resize: vertical; }
+  .scene-actions { display: flex; gap: 8px; margin-top: auto; }
+  .scene-actions button { padding: 6px 14px; font-size: 12.5px; }
+  .badge { font-size: 12px; padding: 3px 9px; border-radius: 20px; }
+  .badge-ok { background: #e7f7ee; color: var(--ok); }
+  .status { margin-top: 10px; font-size: 13px; color: var(--muted); min-height: 18px; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #c3c8ff; border-top-color: var(--primary); border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  video { width: 100%; border-radius: 10px; margin-top: 12px; background: #000; }
+  .hidden { display: none; }
+  a.dl { display: inline-block; margin-top: 10px; color: var(--primary); text-decoration: none; font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🎬 AI 漫剧工坊</h1>
+  <p>粘贴你的故事或剧本 → AI 生成分镜、图片、配音 → 一键合成漫画短剧视频</p>
+</header>
+<div class="wrap">
+
+  <!-- 第一步 -->
+  <div class="card">
+    <h2><span class="step-num">1</span>输入故事 / 剧本</h2>
+    <textarea id="script" placeholder="在这里粘贴你的小说片段、故事梗概或完整剧本……&#10;例如：深夜的城市里，外卖员小李接到了一个奇怪的订单，收货地址竟是一栋废弃的大楼……"></textarea>
+    <div class="row">
+      <select id="style">
+        <option>日系动漫风</option>
+        <option>国风水墨</option>
+        <option>美式漫画风</option>
+        <option>赛博朋克</option>
+        <option>治愈手绘风</option>
+      </select>
+      <select id="sceneCount">
+        <option value="4">4 幕</option>
+        <option value="6" selected>6 幕</option>
+        <option value="8">8 幕</option>
+        <option value="10">10 幕</option>
+      </select>
+      <span class="hint">配音音色：</span>
+      <select id="voice">
+        <option value="zh-CN-YunxiNeural">男声·云希（阳光青年）</option>
+        <option value="zh-CN-YunyangNeural">男声·云扬（播音腔）</option>
+        <option value="zh-CN-XiaoxiaoNeural">女声·晓晓（温柔）</option>
+        <option value="zh-CN-XiaoyiNeural">女声·晓伊（活泼）</option>
+      </select>
+      <button class="btn-primary" id="btnStoryboard" onclick="genStoryboard()">✨ 生成分镜</button>
+    </div>
+    <div class="status" id="status1"></div>
+  </div>
+
+  <!-- 第二步 -->
+  <div class="card hidden" id="cardScenes">
+    <h2><span class="step-num">2</span>分镜预览与编辑
+      <span class="hint" style="margin-left:auto">可直接修改文字；然后逐幕生成图片和配音，或点右侧批量按钮</span>
+    </h2>
+    <div class="row" style="margin:0 0 14px">
+      <button class="btn-ghost" id="btnAllImages" onclick="genAllImages()">🖼 批量生成图片</button>
+      <button class="btn-ghost" id="btnAllTts" onclick="genAllTts()">🎙 批量生成配音</button>
+    </div>
+    <div id="scenes"></div>
+    <div class="status" id="status2"></div>
+  </div>
+
+  <!-- 第三步 -->
+  <div class="card hidden" id="cardCompose">
+    <h2><span class="step-num">3</span>合成视频</h2>
+    <div class="row" style="margin-top:0">
+      <button class="btn-primary" id="btnCompose" onclick="composeVideo()">🎬 合成完整漫剧视频</button>
+      <span class="hint">图片 + 配音 + 字幕 → mp4（1280×720）</span>
+    </div>
+    <div class="status" id="status3"></div>
+    <video id="player" class="hidden" controls></video>
+    <a class="dl hidden" id="dlLink" download="ai-comic-drama.mp4">⬇️ 下载视频</a>
+  </div>
+
+</div>
+<script>
+const $ = id => document.getElementById(id);
+let projectId = null, scenes = [];
+
+async function post(url, body) {
+  const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+function setStatus(id, text, loading) {
+  $(id).innerHTML = (loading ? '<span class="spinner"></span>' : '') + text;
+}
+
+async function genStoryboard() {
+  const script = $("script").value.trim();
+  if (!script) { alert("请先输入故事或剧本"); return; }
+  $("btnStoryboard").disabled = true;
+  setStatus("status1", "AI 正在把你的故事改编成分镜脚本……", true);
+  try {
+    const j = await post("/api/storyboard", {script, style: $("style").value, scene_count: +$("sceneCount").value});
+    projectId = j.project_id; scenes = j.scenes;
+    renderScenes();
+    $("cardScenes").classList.remove("hidden");
+    $("cardCompose").classList.remove("hidden");
+    setStatus("status1", "✅ 分镜已生成，共 " + scenes.length + " 幕，可继续编辑");
+  } catch (e) { setStatus("status1", "❌ " + e.message, false); }
+  $("btnStoryboard").disabled = false;
+}
+
+function renderScenes() {
+  $("scenes").innerHTML = scenes.map((s, i) => `
+    <div class="scene">
+      <div>
+        <img class="scene-img" id="img${i}" ${s.image ? `src="/api/file/${projectId}/${s.image}"` : ""}>
+      </div>
+      <div class="scene-body">
+        <div><label>标题</label><input id="title${i}" value="${esc(s.title)}"></div>
+        <div><label>旁白</label><textarea id="narr${i}">${esc(s.narration)}</textarea></div>
+        <div><label>台词</label><textarea id="dlg${i}" placeholder="角色台词（可为空）">${esc(s.dialogue)}</textarea></div>
+        <div><label>画面描述（生图提示词）</label><textarea id="prompt${i}">${esc(s.image_prompt || "")}</textarea></div>
+        <div class="scene-actions">
+          <button class="btn-ghost" onclick="genImage(${i})">生成图片</button>
+          <button class="btn-ghost" onclick="genTts(${i})">生成配音</button>
+          <span id="tag${i}"></span>
+        </div>
+      </div>
+    </div>`).join("");
+  if (scenes.some(s => s.image)) $("btnAllImages").disabled = false;
+}
+
+function esc(s){ return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;"); }
+function tag(i, ok){ $("tag"+i).innerHTML = ok ? '<span class="badge badge-ok">已完成</span>' : ""; }
+
+async function genImage(i) {
+  const prompt = $("prompt"+i).value.trim();
+  if (!prompt) { alert("请填写画面描述"); return; }
+  tag(i, false); $("tag"+i).innerHTML = '<span class="spinner"></span>';
+  try {
+    const j = await post("/api/image", {project_id: projectId, prompt, style: $("style").value});
+    scenes[i].image = j.image;
+    $("img"+i).src = "/api/file/" + projectId + "/" + j.image + "?t=" + Date.now();
+    tag(i, true);
+  } catch (e) { $("tag"+i).innerHTML = "❌"; alert(e.message); }
+}
+
+async function genTts(i) {
+  const text = ($("narr"+i).value.trim() + " " + $("dlg"+i).value.trim()).trim();
+  if (!text) { alert("该幕没有旁白或台词"); return; }
+  $("tag"+i).innerHTML = '<span class="spinner"></span>';
+  try {
+    const j = await post("/api/tts", {project_id: projectId, text, voice: $("voice").value});
+    scenes[i].tts = j.tts; tag(i, true);
+  } catch (e) { $("tag"+i).innerHTML = "❌"; alert(e.message); }
+}
+
+async function genAllImages() {
+  $("btnAllImages").disabled = true;
+  for (let i = 0; i < scenes.length; i++) {
+    setStatus("status2", `正在生成第 ${i+1}/${scenes.length} 幕图片……`, true);
+    await genImage(i);
+  }
+  setStatus("status2", "✅ 全部图片生成完毕");
+  $("btnAllImages").disabled = false;
+}
+
+async function genAllTts() {
+  $("btnAllTts").disabled = true;
+  for (let i = 0; i < scenes.length; i++) {
+    setStatus("status2", `正在生成第 ${i+1}/${scenes.length} 幕配音……`, true);
+    await genTts(i);
+  }
+  setStatus("status2", "✅ 全部配音生成完毕");
+  $("btnAllTts").disabled = false;
+}
+
+async function composeVideo() {
+  // 收集最新编辑内容
+  scenes.forEach((s, i) => {
+    s.title = $("title"+i).value; s.narration = $("narr"+i).value;
+    s.dialogue = $("dlg"+i).value; s.image_prompt = $("prompt"+i).value;
+  });
+  $("btnCompose").disabled = true;
+  setStatus("status3", "正在合成视频（图片动画 + 配音 + 字幕），请稍候……", true);
+  try {
+    const j = await post("/api/compose", {project_id: projectId, scenes});
+    $("player").src = j.video; $("player").classList.remove("hidden");
+    $("dlLink").href = j.video; $("dlLink").classList.remove("hidden");
+    setStatus("status3", "🎉 合成完成！");
+  } catch (e) { setStatus("status3", "❌ " + e.message); }
+  $("btnCompose").disabled = false;
+}
+</script>
+</body>
+</html>
