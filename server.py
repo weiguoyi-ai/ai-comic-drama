@@ -37,7 +37,8 @@ class ImageReq(BaseModel):
     project_id: str
     prompt: str
     style: str = ""
-    aspect: str = "16:9"
+    aspect: str = "9:16"
+    ref_image: str = ""  # 参考图文件名：用于保持角色形象一致
 
 
 class TtsReq(BaseModel):
@@ -49,7 +50,13 @@ class TtsReq(BaseModel):
 class ComposeReq(BaseModel):
     project_id: str
     scenes: list[Scene]
-    aspect: str = "16:9"
+    aspect: str = "9:16"
+
+
+@app.get("/api/config")
+def api_config():
+    """告诉前端当前是否已接入真实模型。"""
+    return providers.config_status()
 
 
 @app.post("/api/storyboard")
@@ -70,8 +77,9 @@ def api_storyboard(req: StoryboardReq):
 def api_image(req: ImageReq):
     try:
         project_dir = _ensure_project(req.project_id)
-        filename = providers.gen_image(req.prompt, project_dir, req.style, req.aspect)
-        return {"image": filename}
+        filename, is_mock = providers.gen_image(
+            req.prompt, project_dir, req.style, req.aspect, req.ref_image)
+        return {"image": filename, "mock": is_mock}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 

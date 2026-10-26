@@ -44,6 +44,10 @@
   .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid #c3c8ff; border-top-color: var(--primary); border-radius: 50%; animation: spin .7s linear infinite; vertical-align: -2px; margin-right: 6px; }
   @keyframes spin { to { transform: rotate(360deg); } }
   video { width: 100%; border-radius: 10px; margin-top: 12px; background: #000; }
+  .banner { border-radius: 12px; padding: 12px 18px; margin-bottom: 20px; font-size: 13.5px; display: flex; gap: 10px; align-items: center; }
+  .banner-ok { background: #e7f7ee; color: #146b3a; border: 1px solid #bfe8d2; }
+  .banner-warn { background: #fff7e6; color: #8a5a00; border: 1px solid #ffe0a3; }
+  .banner a { color: inherit; font-weight: 700; }
   .hidden { display: none; }
   a.dl { display: inline-block; margin-top: 10px; color: var(--primary); text-decoration: none; font-weight: 600; }
 </style>
@@ -54,6 +58,8 @@
   <p>粘贴你的故事或剧本 → AI 生成分镜、图片、配音 → 一键合成漫画短剧视频</p>
 </header>
 <div class="wrap">
+
+  <div class="banner hidden" id="banner"></div>
 
   <!-- 第一步 -->
   <div class="card">
@@ -87,6 +93,12 @@
       </select>
       <button class="btn-primary" id="btnStoryboard" onclick="genStoryboard()">✨ 生成分镜</button>
     </div>
+    <div class="row">
+      <label class="hint" style="display:flex;gap:6px;align-items:center;cursor:pointer">
+        <input type="checkbox" id="useRef" checked>
+        角色一致性（首幕成功后，后续分镜以其为参考图，形象更统一）
+      </label>
+    </div>
     <div class="status" id="status1"></div>
   </div>
 
@@ -119,6 +131,27 @@
 <script>
 const $ = id => document.getElementById(id);
 let projectId = null, scenes = [];
+let firstImage = "";   // 第一张成功生成的图，用作后续分镜的角色参考图
+
+/* 启动时检查是否已接入真实模型 */
+(async function loadConfig() {
+  try {
+    const c = await (await fetch("/api/config")).json();
+    const b = $("banner");
+    b.classList.remove("hidden");
+    if (c.image.ready && c.llm.ready) {
+      b.className = "banner banner-ok";
+      b.innerHTML = `✅ 已接入火山方舟 · 生图 <b>${c.image.model}</b> · 分镜 <b>${c.llm.model}</b>，生成的是真实 AI 画面`;
+    } else {
+      b.className = "banner banner-warn";
+      const missing = [];
+      if (!c.image.ready) missing.push("生图");
+      if (!c.llm.ready) missing.push("分镜");
+      b.innerHTML = `⚠️ 尚未填写 API Key（缺：${missing.join("、")}），当前输出占位图。<br>
+        打开项目目录下的 <code>config.json</code>，把火山方舟 API Key 填到 <code>llm.api_key</code> 和 <code>image.api_key</code>，保存后刷新本页即可。`;
+    }
+  } catch (e) { /* 忽略 */ }
+})();
 
 async function post(url, body) {
   const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
@@ -138,7 +171,7 @@ async function genStoryboard() {
   setStatus("status1", "AI 正在把你的故事改编成分镜脚本……", true);
   try {
     const j = await post("/api/storyboard", {script, style: $("style").value, scene_count: +$("sceneCount").value});
-    projectId = j.project_id; scenes = j.scenes;
+    projectId = j.project_id; scenes = j.scenes; firstImage = "";
     renderScenes();
     $("cardScenes").classList.remove("hidden");
     $("cardCompose").classList.remove("hidden");
@@ -175,9 +208,15 @@ async function genImage(i) {
   const prompt = $("prompt"+i).value.trim();
   if (!prompt) { alert("请填写画面描述"); return; }
   tag(i, false); $("tag"+i).innerHTML = '<span class="spinner"></span>';
+  // 角色一致性：用已生成的第一张图作为参考图（仅对第 2 幕及以后生效）
+  const ref = ($("useRef").checked && i > 0 && firstImage) ? firstImage : "";
   try {
-    const j = await post("/api/image", {project_id: projectId, prompt, style: $("style").value, aspect: $("aspect").value});
+    const j = await post("/api/image", {
+      project_id: projectId, prompt, style: $("style").value,
+      aspect: $("aspect").value, ref_image: ref
+    });
     scenes[i].image = j.image;
+    if (!firstImage) firstImage = j.image;
     $("img"+i).src = "/api/file/" + projectId + "/" + j.image + "?t=" + Date.now();
     tag(i, true);
   } catch (e) { $("tag"+i).innerHTML = "❌"; alert(e.message); }

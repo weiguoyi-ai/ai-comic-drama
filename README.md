@@ -9,9 +9,9 @@
 | 模块 | 说明 |
 |---|---|
 | 📝 剧本转分镜 | 调用 LLM 把小说/剧本改编为结构化分镜（标题/旁白/台词/画面描述） |
-| 🖼 分镜生图 | 调用文生图模型生成每幕画面，带角色外貌提示保持形象一致 |
+| 🖼 分镜生图 | 火山方舟豆包 Seedream 出图，可用首图作参考保持角色形象一致 |
 | 🎙 AI 配音 | edge-tts 免费语音合成，多种中文音色可选 |
-| 🎬 视频合成 | ffmpeg 自动合成：Ken Burns 动效 + SRT 字幕烧录 → 1280×720 mp4 |
+| 🎬 视频合成 | ffmpeg 自动合成：Ken Burns 动效 + SRT 字幕烧录 → 竖屏 720×1280 / 横屏 1280×720 |
 | 🧪 Mock 模式 | 不配置任何 API Key 也能跑通全流程（占位图 + 静音），方便开发调试 |
 
 ## 🚀 快速开始
@@ -29,53 +29,52 @@ python server.py
 
 默认使用 **Mock 模式**，无需任何 Key 即可体验完整流程。
 
-## 🔑 接入真实模型
+## 🔑 接入真实模型（火山方舟 · 一个 Key 搞定全流程）
 
-复制 `config.example.json` 为 `config.json`，填入你的 API Key，并把对应 `"mock"` 改为 `false`：
+本项目默认对接**火山方舟**：豆包 Seedream 负责出图、豆包 Seed 负责分镜文案，配音用免费的 edge-tts。
+
+### 第 1 步：获取 API Key（约 3 分钟）
+
+1. 打开 [火山方舟控制台](https://console.volcengine.com/ark)，用手机号注册并完成实名认证
+2. 左侧菜单进入 **开通管理**，开通这两个模型：
+   - `Doubao-Seedream-4.0`（图像生成）
+   - `Doubao-Seed-1.6-flash`（文本，用于分镜）
+3. 左侧菜单进入 **API Key 管理** → **创建 API Key**，复制生成的 Key（形如 `xxxxxxxx-xxxx-...`）
+
+> 各模型有一定免费额度，超出后按量计费；具体以控制台价格页为准。
+
+### 第 2 步：填入配置
+
+打开项目根目录的 `config.json`，把 Key 填进 `llm.api_key` 和 `image.api_key`（两处都要填，或设置环境变量 `ARK_API_KEY`）：
 
 ```json
 {
-  "llm": {
-    "mock": false,
-    "base_url": "https://open.bigmodel.cn/api/paas/v4",
-    "api_key": "你的KEY",
-    "model": "glm-4-flash"
-  },
-  "image": {
-    "mock": false,
-    "base_url": "https://open.bigmodel.cn/api/paas/v4",
-    "api_key": "你的KEY",
-    "model": "cogview-3-flash",
-    "size": "1344x768"
-  }
+  "llm":   { "api_key": "你的Key", "model": "doubao-seed-1-6-flash-250828" },
+  "image": { "api_key": "你的Key", "model": "doubao-seedream-4-0-250828",
+             "size_portrait": "1152x2048", "size_landscape": "2048x1152" }
 }
 ```
 
-只要是 **OpenAI 兼容接口** 都能接，推荐组合（国内可访问）：
+### 第 3 步：刷新页面
 
-| 用途 | 推荐 | 备注 |
-|---|---|---|
-| LLM 分镜 | 智谱 glm-4-flash | 有免费额度 |
-| 文生图 | 智谱 cogview-3-flash / 阿里通义万相 | cogview-3-flash 免费 |
-| 配音 | edge-tts | 完全免费，无需 Key |
+保存配置后刷新 http://127.0.0.1:8000 ，顶部出现绿色横幅「已接入火山方舟」即成功。
+没填 Key 时自动降级为占位图模式，不会报错。
 
-其他可替换：DeepSeek、Kimi、豆包（LLM）；Flux、SD（图）等。
+### 换成其他模型
 
-### 🧚 追求「仙侠玄幻·唯美写实」爆款画风？
+任何 **OpenAI 兼容接口** 都能接，只改 `base_url` / `model` / `api_key` 即可：
 
-内置的「仙侠玄幻·唯美写实」画风波及冰蓝色调、仙气光效等提示词，任何模型都能出效果。
-若想最大程度还原抖音上豆包系漫剧质感，推荐把 `image` 配置换成**火山方舟（即梦 Seedream）**：
+| 用途 | 可选方案 |
+|---|---|
+| 分镜文案 | 豆包 Seed、智谱 glm-4-flash、DeepSeek、Kimi |
+| 文生图 | 豆包 Seedream 4.0/5.0、智谱 cogview、通义万相、Flux |
+| 配音 | edge-tts（内置免费）、火山语音合成 |
 
-```json
-"image": {
-  "mock": false,
-  "base_url": "https://ark.cn-beijing.volces.com/api/v3",
-  "api_key": "你的方舟API_KEY",
-  "model": "doubao-seedream-4-0"
-}
-```
+### 🧚 画风与尺寸
 
-同时可在界面选择 **竖屏 9:16** 输出，与参考视频一致。
+- 内置 6 种画风预设，其中 **「仙侠玄幻·唯美写实」** 为抖音爆款漫剧画风（冰蓝色调、仙气光效、飘逸长发）
+- 支持 **9:16 竖屏**（720×1280）与 16:9 横屏（1280×720）
+- 勾选 **角色一致性** 后，第 2 幕起会以首张图作参考图（Seedream 图生图），人物形象更统一
 
 ## 📁 项目结构
 
