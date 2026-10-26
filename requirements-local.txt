@@ -1,0 +1,10 @@
+# 本地离线模式额外依赖（零费用、可断网）
+# 注意：torch 请用 CPU 专用源安装，避免下载 2.5GB 的 CUDA 版本：
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+diffusers
+transformers
+accelerate
+safetensors
+pillow
+huggingface_hub
+peft

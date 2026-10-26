@@ -77,9 +77,9 @@ def api_storyboard(req: StoryboardReq):
 def api_image(req: ImageReq):
     try:
         project_dir = _ensure_project(req.project_id)
-        filename, is_mock = providers.gen_image(
+        filename, backend = providers.gen_image(
             req.prompt, project_dir, req.style, req.aspect, req.ref_image)
-        return {"image": filename, "mock": is_mock}
+        return {"image": filename, "backend": backend, "mock": backend == "placeholder"}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -88,8 +88,8 @@ def api_image(req: ImageReq):
 def api_tts(req: TtsReq):
     try:
         project_dir = _ensure_project(req.project_id)
-        filename = providers.gen_tts(req.text, req.voice, project_dir)
-        return {"tts": filename}
+        filename, engine = providers.gen_tts(req.text, req.voice, project_dir)
+        return {"tts": filename, "engine": engine}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 

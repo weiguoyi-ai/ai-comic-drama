@@ -1,3 +1,4 @@
+# 核心依赖（云端模式 / 基础功能）
 fastapi
 uvicorn[standard]
 edge-tts

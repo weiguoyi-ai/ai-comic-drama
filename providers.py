@@ -1,8 +1,15 @@
 # -*- coding: utf-8 -*-
-"""AI Provider 适配层：LLM 分镜 / 生图 / TTS
+"""AI Provider 适配层：分镜 / 生图 / 配音，支持「云端免费」与「本地离线」自动切换。
 
-默认对接火山方舟（豆包 Seedream + 豆包 Seed），一个 API Key 同时搞定分镜文案与画面。
-若未填写 Key，则自动降级为 mock 模式（占位图 + 段落切分），保证流程始终可跑通。
+运行模式（config.json 的 "mode"）：
+  auto  —— 有云端 Key 就用云端，没 Key 自动落本地，本地也没模型才用占位图（默认）
+  local —— 强制本地模型，完全断网可用
+  cloud —— 强制云端（火山方舟）
+
+三条链路：
+  分镜：火山方舟豆包 Seed  /  本地 Qwen2.5-1.5B  /  规则切分占位
+  生图：火山方舟 Seedream  /  本地 SD1.5+LCM    /  纯色占位图
+  配音：Piper 本地离线      /  edge-tts 免费在线
 """
 
 import base64
@@ -12,6 +19,10 @@ import re
 import uuid
 
 import requests
+
+import local_image
+import local_llm
+import local_tts
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -28,6 +39,7 @@ def load_config() -> dict:
     with open(src, "r", encoding="utf-8") as f:
         cfg = json.load(f)
 
+    cfg.setdefault("mode", "auto")
     env_key = os.environ.get("ARK_API_KEY", "").strip()
     for section in ("llm", "image"):
         cfg.setdefault(section, {})
@@ -35,25 +47,45 @@ def load_config() -> dict:
         cfg[section].setdefault("api_key", "")
         if env_key:
             cfg[section]["api_key"] = env_key
-    cfg.setdefault("tts", {"voice": "zh-CN-XiaoxiaoNeural"})
+    cfg.setdefault("tts", {"engine": "auto", "voice": "zh-CN-XiaoxiaoNeural"})
+    cfg.setdefault("local", {"steps": 6, "guidance": 1.6})
     return cfg
 
 
 def _has_key(cfg: dict) -> bool:
-    """判断某个 provider 是否已具备真实调用条件。"""
+    """云端 Key 是否可用。"""
     if cfg.get("mock"):
         return False
     key = (cfg.get("api_key") or "").strip()
     return bool(key) and "你的" not in key and "your" not in key.lower()
 
 
+def _pick_backend(section_cfg: dict, local_ready: bool, mode: str) -> str:
+    """返回 cloud / local / placeholder。"""
+    cloud_ok = _has_key(section_cfg)
+    if mode == "local":
+        return "local" if local_ready else "placeholder"
+    if mode == "cloud":
+        return "cloud" if cloud_ok else ("local" if local_ready else "placeholder")
+    return "cloud" if cloud_ok else ("local" if local_ready else "placeholder")
+
+
 def config_status() -> dict:
-    """返回给前端的配置状态。"""
+    """返回给前端的运行模式与各环节后端状态。"""
     cfg = load_config()
-    llm, img = cfg["llm"], cfg["image"]
+    mode = cfg.get("mode", "auto")
+    img_local, llm_local, tts_local = local_image.is_ready(), local_llm.is_ready(), local_tts.is_ready()
     return {
-        "llm": {"ready": _has_key(llm), "model": llm.get("model", "")},
-        "image": {"ready": _has_key(img), "model": img.get("model", "")},
+        "mode": mode,
+        "llm": {"backend": _pick_backend(cfg["llm"], llm_local, mode),
+                "model": cfg["llm"].get("model", ""),
+                "local_model": "Qwen2.5-1.5B"},
+        "image": {"backend": _pick_backend(cfg["image"], img_local, mode),
+                  "model": cfg["image"].get("model", ""),
+                  "local_model": "SD1.5 DreamShaper8 + LCM"},
+        "tts": {"backend": "local" if tts_local else "cloud",
+                "engine": "Piper（离线）" if tts_local else "edge-tts（在线免费）"},
+        "local_ready": {"image": img_local, "llm": llm_local, "tts": tts_local},
     }
 
 
@@ -77,7 +109,7 @@ def style_prompt(style: str) -> str:
     return STYLE_PRESETS.get(style, style)
 
 
-# ---------------------------------------------------------------- LLM：剧本 → 分镜
+# ---------------------------------------------------------------- 分镜：剧本 → 分镜
 
 STORYBOARD_PROMPT = """你是一名专业漫剧分镜师。请把下面的故事/剧本改编成 {scene_count} 个分镜。
 
@@ -95,46 +127,94 @@ STORYBOARD_PROMPT = """你是一名专业漫剧分镜师。请把下面的故事
 {script}
 """
 
+LOCAL_STORYBOARD_PROMPT = """你是漫剧分镜师。把下面的故事拆成 {scene_count} 个分镜。
+
+只输出 JSON 数组，格式：
+[{{"title":"第1幕","narration":"旁白一句话","dialogue":"角色台词或空","image_prompt":"画面描述，含人物外貌动作场景光线，40字内","characters":["角色名"]}}]
+
+画风：{style}
+
+故事：
+{script}
+
+JSON 数组：
+"""
+
 
 def _strip_json(text):
-    """从 LLM 输出中提取 JSON 数组（容错 markdown 代码块、前后缀文字）。"""
-    if isinstance(text, list):  # 多模态返回结构
+    """从模型输出中提取 JSON 数组（容错 markdown 代码块、前后缀文字）。"""
+    if isinstance(text, list):
         text = "".join(p.get("text", "") for p in text if isinstance(p, dict))
     text = re.sub(r"```(?:json)?", "", str(text)).strip().strip("`")
     start, end = text.find("["), text.rfind("]")
     if start != -1 and end != -1:
         return json.loads(text[start:end + 1])
-    raise ValueError("模型返回内容中没有找到 JSON 数组，请重试或换用更强的模型")
+    raise ValueError("模型返回内容中没有找到 JSON 数组")
+
+
+def _normalize(scenes, count):
+    out = []
+    for i, sc in enumerate(scenes[:count] if count else scenes, 1):
+        if not isinstance(sc, dict):
+            continue
+        out.append({
+            "title": str(sc.get("title") or f"第{i}幕"),
+            "narration": str(sc.get("narration") or ""),
+            "dialogue": str(sc.get("dialogue") or ""),
+            "image_prompt": str(sc.get("image_prompt") or sc.get("narration") or ""),
+            "characters": sc.get("characters") or [],
+            "image": "", "tts": "",
+        })
+    return out
 
 
 def gen_storyboard(script: str, style: str, scene_count: int) -> dict:
-    """调用 LLM 生成分镜。返回 {"characters": ..., "scenes": [...], "mock": bool}"""
-    cfg = load_config()["llm"]
-    if not _has_key(cfg):
-        return {**_mock_storyboard(script, style, scene_count), "mock": True}
+    """生成分镜。返回 {"scenes": [...], "backend": "cloud|local|placeholder"}"""
+    cfg = load_config()
+    mode = cfg.get("mode", "auto")
+    backend = _pick_backend(cfg["llm"], local_llm.is_ready(), mode)
 
+    if backend == "cloud":
+        try:
+            scenes = _storyboard_cloud(cfg["llm"], script, style, scene_count)
+            return {"scenes": _normalize(scenes, scene_count), "backend": "cloud"}
+        except Exception as e:
+            if mode == "cloud":
+                raise
+            backend = "local" if local_llm.is_ready() else "placeholder"
+            if backend == "local":
+                scenes = _storyboard_local(script, style, scene_count)
+                return {"scenes": scenes, "backend": "local", "note": str(e)[:120]}
+            raise
+
+    if backend == "local":
+        return {"scenes": _storyboard_local(script, style, scene_count), "backend": "local"}
+
+    return {"scenes": _mock_storyboard(script, style, scene_count), "backend": "placeholder"}
+
+
+def _storyboard_cloud(cfg, script, style, scene_count):
     prompt = STORYBOARD_PROMPT.format(
-        scene_count=scene_count, style=style_prompt(style), script=script[:6000]
-    )
+        scene_count=scene_count, style=style_prompt(style), script=script[:6000])
     body = {
         "model": cfg["model"],
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.8,
         "thinking": {"type": "disabled"},
     }
-    content = _ark_chat(cfg, body)
+    return _strip_json(_ark_chat(cfg, body))
 
-    scenes = _strip_json(content)
-    # 规范化字段
-    for i, sc in enumerate(scenes, 1):
-        sc.setdefault("title", f"第{i}幕")
-        sc.setdefault("narration", "")
-        sc.setdefault("dialogue", "")
-        sc.setdefault("image_prompt", "")
-        sc.setdefault("characters", [])
-        sc["image"] = ""
-        sc["tts"] = ""
-    return {"characters": {}, "scenes": scenes, "mock": False}
+
+def _storyboard_local(script, style, scene_count):
+    prompt = LOCAL_STORYBOARD_PROMPT.format(
+        scene_count=scene_count, style=style_prompt(style), script=script[:1200])
+    for _ in range(2):
+        try:
+            raw = local_llm.chat(prompt, max_new_tokens=1100)
+            return _normalize(_strip_json(raw), scene_count)
+        except Exception:
+            continue
+    return _mock_storyboard(script, style, scene_count)
 
 
 def _ark_chat(cfg: dict, body: dict) -> str:
@@ -147,55 +227,62 @@ def _ark_chat(cfg: dict, body: dict) -> str:
             continue
         if resp.status_code != 200:
             raise RuntimeError(f"分镜生成失败（HTTP {resp.status_code}）：{_short(resp.text)}")
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+        return resp.json()["choices"][0]["message"]["content"]
     raise RuntimeError("分镜生成失败：模型参数不被支持")
 
 
-def _mock_storyboard(script: str, style: str, scene_count: int) -> dict:
-    """mock 模式：按段落切分剧本。"""
+def _mock_storyboard(script: str, style: str, scene_count: int):
+    """占位：按标点切分剧本。"""
     paras = [p.strip() for p in re.split(r"[\n。！？]+", script) if p.strip()]
-    step = max(1, len(paras) // scene_count)
+    step = max(1, len(paras) // scene_count) if paras else 1
     scenes = []
     for i in range(scene_count):
         seg = "。".join(paras[i * step:(i + 1) * step]) or f"第{i + 1}幕"
         scenes.append({
             "title": f"第{i + 1}幕", "narration": seg[:120], "dialogue": "",
-            "image_prompt": f"{style}，漫画分镜第{i + 1}格：{seg[:40]}",
-            "characters": [], "image": "", "tts": "",
+            "image_prompt": f"{seg[:60]}", "characters": [], "image": "", "tts": "",
         })
-    return {"characters": {}, "scenes": scenes}
+    return scenes
 
 
-# ---------------------------------------------------------------- 生图（豆包 Seedream）
+# ---------------------------------------------------------------- 生图
 
 def gen_image(prompt: str, project_dir: str, style: str = "", aspect: str = "9:16",
               ref_image: str = "") -> tuple:
-    """生成一张分镜图片，返回 (文件名, 是否 mock)。
-
-    ref_image: 参考图文件名（同一 project 目录下），用于保持角色形象一致。
-    """
-    cfg = load_config()["image"]
-    filename = "img_%s.jpeg" % uuid.uuid4().hex[:10]
-    filepath = os.path.join(project_dir, filename)
+    """生成一张分镜图片，返回 (文件名, backend)。"""
+    cfg = load_config()
+    mode = cfg.get("mode", "auto")
+    backend = _pick_backend(cfg["image"], local_image.is_ready(), mode)
     full_prompt = f"{prompt}，{style_prompt(style)}" if style else prompt
 
-    if not _has_key(cfg):
-        _mock_image(full_prompt, filepath, aspect)
-        return filename.replace(".jpeg", ".png"), True
+    if backend == "cloud":
+        try:
+            return _image_cloud(cfg["image"], full_prompt, project_dir, aspect, ref_image), "cloud"
+        except Exception:
+            if mode == "cloud" or not local_image.is_ready():
+                raise
+            backend = "local"
 
-    # 尺寸：竖屏 / 横屏，取配置值，失败时自动降级到官方预设比例
+    if backend == "local":
+        return _image_local(cfg.get("local", {}), full_prompt, project_dir, aspect), "local"
+
+    filename = "img_%s.png" % uuid.uuid4().hex[:10]
+    _mock_image(full_prompt, os.path.join(project_dir, filename), aspect)
+    return filename, "placeholder"
+
+
+def _image_cloud(cfg, full_prompt, project_dir, aspect, ref_image):
+    filename = "img_%s.jpeg" % uuid.uuid4().hex[:10]
+    filepath = os.path.join(project_dir, filename)
+
     if aspect == "9:16":
         sizes = [cfg.get("size_portrait", "1152x2048"), "9:16", "2K"]
     else:
         sizes = [cfg.get("size_landscape", "2048x1152"), "16:9", "2K"]
 
     payload_base = {
-        "model": cfg["model"],
-        "prompt": full_prompt[:1000],
-        "watermark": False,
-        "response_format": "url",
-        "output_format": "jpeg",
+        "model": cfg["model"], "prompt": full_prompt[:1000],
+        "watermark": False, "response_format": "url", "output_format": "jpeg",
     }
     if ref_image:
         ref_path = os.path.join(project_dir, ref_image)
@@ -210,17 +297,27 @@ def gen_image(prompt: str, project_dir: str, style: str = "", aspect: str = "9:1
             resp = requests.post(
                 cfg["base_url"].rstrip("/") + "/images/generations",
                 headers={"Authorization": "Bearer " + cfg["api_key"]},
-                json=attempt, timeout=300,
-            )
+                json=attempt, timeout=300)
             if resp.status_code == 200:
-                data = resp.json()["data"][0]
-                _save_image(data, filepath)
-                return filename, False
+                _save_image(resp.json()["data"][0], filepath)
+                return filename
             last_err = f"HTTP {resp.status_code}：{_short(resp.text)}"
-            if attempt is payload:  # 参考图模式失败 → 退回纯文生图
+            if attempt is payload:
                 continue
-            break  # 该尺寸不可用，换下一个尺寸
-    raise RuntimeError("生图失败：" + last_err)
+            break
+    raise RuntimeError("云端生图失败：" + last_err)
+
+
+def _image_local(local_cfg, full_prompt, project_dir, aspect):
+    filename = "img_%s.jpeg" % uuid.uuid4().hex[:10]
+    filepath = os.path.join(project_dir, filename)
+    local_image.generate(
+        full_prompt, filepath, aspect=aspect,
+        steps=int(local_cfg.get("steps", 6)),
+        guidance=float(local_cfg.get("guidance", 1.6)),
+        seed=int(local_cfg.get("seed", -1)),
+    )
+    return filename
 
 
 def _save_image(item: dict, filepath: str):
@@ -244,7 +341,7 @@ def _data_uri(path: str) -> str:
 
 
 def _mock_image(prompt: str, filepath: str, aspect: str):
-    """mock：ffmpeg 生成占位图（带提示词文字）。"""
+    """占位图：ffmpeg 纯色 + 提示词文字。"""
     import subprocess
     size = "768x1344" if aspect == "9:16" else "1344x768"
     safe = prompt[:28].replace(":", " ").replace("'", "").replace("\\", " ")
@@ -253,28 +350,38 @@ def _mock_image(prompt: str, filepath: str, aspect: str):
         [_ffmpeg_bin(), "-y", "-f", "lavfi", "-i", "color=c=0x2c3e50:s=" + size,
          "-vf", f"drawtext=text='{safe}':fontcolor=white:fontsize=44:"
                 f"x=(w-tw)/2:y=(h-th)/2:fontfile='{font}'",
-         "-frames:v", "1", filepath.replace(".jpeg", ".png")],
+         "-frames:v", "1", filepath],
         check=True, capture_output=True)
 
 
-# ---------------------------------------------------------------- TTS 配音
+# ---------------------------------------------------------------- 配音
 
-def gen_tts(text: str, voice: str, project_dir: str) -> str:
-    """生成配音，返回音频文件名。edge-tts 免费，失败时回退为静音。"""
+def gen_tts(text: str, voice: str, project_dir: str) -> tuple:
+    """生成配音，返回 (音频文件名, engine)。优先本地 Piper，缺失则 edge-tts。"""
+    cfg = load_config()
+    engine = cfg.get("tts", {}).get("engine", "auto")
+    use_local = local_tts.is_ready() and engine in ("auto", "piper")
+    if use_local:
+        try:
+            wav = local_tts.synth(text, project_dir)
+            return local_tts.wav_to_mp3(os.path.join(project_dir, wav)), "piper"
+        except Exception:
+            if engine == "piper":
+                raise
     filename = "tts_%s.mp3" % uuid.uuid4().hex[:10]
     filepath = os.path.join(project_dir, filename)
-
     try:
         import asyncio
         import edge_tts
         asyncio.run(edge_tts.Communicate(text, voice).save(filepath))
+        return filename, "edge-tts"
     except Exception:
         import subprocess
         subprocess.run(
             [_ffmpeg_bin(), "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
              "-t", "3", "-c:a", "libmp3lame", filepath],
             check=True, capture_output=True)
-    return filename
+        return filename, "silence"
 
 
 # ---------------------------------------------------------------- 工具

@@ -29,7 +29,41 @@ python server.py
 
 默认使用 **Mock 模式**，无需任何 Key 即可体验完整流程。
 
-## 🔑 接入真实模型（火山方舟 · 一个 Key 搞定全流程）
+## 💰 零积分 / 零费用运行（三种模式自动切换）
+
+`config.json` 的 `"mode"` 决定运行方式，**没有 Key 也能出真图**：
+
+| mode | 行为 | 费用 | 联网 | 速度 |
+|---|---|---|---|---|
+| `auto`（默认） | 有云端 Key 走云端，没 Key 自动落本地，本地没模型才用占位图 | 0 | 按需 | 快/慢自适应 |
+| `local` | 强制全本地：本地 SD 生图 + 本地 Qwen 写分镜 + 本地 Piper 配音 | **永久 0 元** | **完全不用** | 慢（约 1 分钟/图） |
+| `cloud` | 强制走火山方舟 | 按量计费（有免费额度） | 需要 | 快、画质最好 |
+
+### 开通「全本地免费模式」
+
+```bash
+# 1. 安装本地推理依赖（torch 用 CPU 专用源，只有 124MB）
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements-local.txt
+
+# 2. 下载本地模型（约 5GB，一次性；优先走 ModelScope 国内源）
+python download_models.py
+
+# 3. 启动（会自动检测到本地模型并切过去）
+python server.py
+```
+
+然后把 `config.json` 里的 `"mode"` 改成 `"local"`，即可**断网使用、不花一分钱**。
+
+- 生图：SD1.5（可替换为 DreamShaper/Anything 等任意 SD1.5 动漫模型）+ LCM 加速，512×896 → 放大到 720×1280，
+  在 i5-1135G7 纯 CPU 实测约 **3–6 分钟/张**（无独显的物理上限；有 NVIDIA 显卡会快 20 倍以上）
+- 分镜：Qwen2.5-1.5B-Instruct，纯 CPU 实测约 **1–1.5 分钟**
+- 配音：Piper 离线声线（秒级；模型缺失时自动用 edge-tts）
+- 想换更二次元的画风：把任意 SD1.5 动漫模型文件替换进 `models/sd-base/` 即可
+
+> 本地模式是「不花钱」的代价换「慢 + 画质中等」。追求参考视频那种质感，仍推荐云端 Seedream。
+
+## 🔑 接入云端模型（可选，火山方舟 · 一个 Key 搞定全流程）
 
 本项目默认对接**火山方舟**：豆包 Seedream 负责出图、豆包 Seed 负责分镜文案，配音用免费的 edge-tts。
 

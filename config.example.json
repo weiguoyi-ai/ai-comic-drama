@@ -1,20 +1,27 @@
 {
+  "mode": "auto",
   "llm": {
     "mock": false,
     "base_url": "https://ark.cn-beijing.volces.com/api/v3",
-    "api_key": "在这里填你的火山方舟 API Key",
+    "api_key": "",
     "model": "doubao-seed-1-6-flash-250828"
   },
   "image": {
     "mock": false,
     "base_url": "https://ark.cn-beijing.volces.com/api/v3",
-    "api_key": "在这里填你的火山方舟 API Key",
+    "api_key": "",
     "model": "doubao-seedream-4-0-250828",
     "size_portrait": "1152x2048",
     "size_landscape": "2048x1152",
     "output_format": "jpeg"
   },
   "tts": {
+    "engine": "auto",
     "voice": "zh-CN-XiaoxiaoNeural"
+  },
+  "local": {
+    "steps": 6,
+    "guidance": 1.6,
+    "seed": -1
   }
 }

@@ -133,23 +133,30 @@ const $ = id => document.getElementById(id);
 let projectId = null, scenes = [];
 let firstImage = "";   // 第一张成功生成的图，用作后续分镜的角色参考图
 
-/* 启动时检查是否已接入真实模型 */
+/* 启动时检查运行模式与各环节后端 */
 (async function loadConfig() {
   try {
     const c = await (await fetch("/api/config")).json();
     const b = $("banner");
     b.classList.remove("hidden");
-    if (c.image.ready && c.llm.ready) {
-      b.className = "banner banner-ok";
-      b.innerHTML = `✅ 已接入火山方舟 · 生图 <b>${c.image.model}</b> · 分镜 <b>${c.llm.model}</b>，生成的是真实 AI 画面`;
-    } else {
-      b.className = "banner banner-warn";
-      const missing = [];
-      if (!c.image.ready) missing.push("生图");
-      if (!c.llm.ready) missing.push("分镜");
-      b.innerHTML = `⚠️ 尚未填写 API Key（缺：${missing.join("、")}），当前输出占位图。<br>
-        打开项目目录下的 <code>config.json</code>，把火山方舟 API Key 填到 <code>llm.api_key</code> 和 <code>image.api_key</code>，保存后刷新本页即可。`;
+    const label = {cloud: "☁️ 云端", local: "💻 本地", placeholder: "⬜ 占位"};
+    const modeName = {auto: "自动切换", local: "强制本地", cloud: "强制云端"}[c.mode] || c.mode;
+    const rows = [
+      `分镜：${label[c.llm.backend]} ${c.llm.backend === "cloud" ? c.llm.model : c.llm.backend === "local" ? c.llm.local_model : "规则切分"}`,
+      `生图：${label[c.image.backend]} ${c.image.backend === "cloud" ? c.image.model : c.image.backend === "local" ? c.image.local_model : "纯色占位图"}`,
+      `配音：${label[c.tts.backend]} ${c.tts.engine}`
+    ];
+    const allLocal = c.llm.backend === "local" && c.image.backend === "local";
+    const anyPlaceholder = c.llm.backend === "placeholder" || c.image.backend === "placeholder";
+    b.className = "banner " + (anyPlaceholder ? "banner-warn" : "banner-ok");
+    let tip = "";
+    if (anyPlaceholder) {
+      tip = `<br>本地模型还没准备好：命令行执行 <code>python download_models.py</code>（约 5-6GB，一次性），
+             或填 <code>config.json</code> 里的火山方舟 Key 走云端。`;
+    } else if (allLocal) {
+      tip = `<br>当前全部本地运行：不花一分钱、可断网，单张图约 1 分钟，请耐心等待。`;
     }
+    b.innerHTML = `运行模式：<b>${modeName}</b>　|　` + rows.join("　|　") + tip;
   } catch (e) { /* 忽略 */ }
 })();
 
