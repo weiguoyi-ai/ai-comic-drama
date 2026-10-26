@@ -35,7 +35,11 @@ def synth(text: str, out_dir: str) -> str:
     voice = _load()
     name = "tts_%s.wav" % uuid.uuid4().hex[:10]
     path = os.path.join(out_dir, name)
+    sample_rate = getattr(getattr(voice, "config", None), "sample_rate", 22050)
     with wave.open(path, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate)
         try:
             voice.synthesize(text, wav)          # piper-tts >= 1.2
         except TypeError:                        # 旧版 API

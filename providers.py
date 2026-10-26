@@ -109,6 +109,23 @@ def style_prompt(style: str) -> str:
     return STYLE_PRESETS.get(style, style)
 
 
+# 本地 SD1.5 只认英文，画风需映射为英文提示词
+STYLE_PRESETS_EN = {
+    "日系动漫风": "anime style, cel shading, clean lineart, vibrant colors, japanese animation",
+    "国风水墨": "chinese ink painting style, minimalist, elegant brush strokes",
+    "美式漫画风": "american comic style, bold outlines, high contrast shading",
+    "赛博朋克": "cyberpunk style, neon night city, rain, high-tech low-life",
+    "治愈手绘风": "healing hand-drawn style, soft brush, warm colors, cozy",
+    "仙侠玄幻·唯美写实": ("chinese xianxia fantasy style, ethereal, ice blue magical glow, "
+                      "flowing hair and silk robes, particles of light, cinematic lighting, "
+                      "highly detailed, beautiful anime illustration"),
+}
+
+
+def style_prompt_en(style: str) -> str:
+    return STYLE_PRESETS_EN.get(style, style)
+
+
 # ---------------------------------------------------------------- 分镜：剧本 → 分镜
 
 STORYBOARD_PROMPT = """你是一名专业漫剧分镜师。请把下面的故事/剧本改编成 {scene_count} 个分镜。
@@ -127,17 +144,19 @@ STORYBOARD_PROMPT = """你是一名专业漫剧分镜师。请把下面的故事
 {script}
 """
 
-LOCAL_STORYBOARD_PROMPT = """你是漫剧分镜师。把下面的故事拆成 {scene_count} 个分镜。
+LOCAL_STORYBOARD_PROMPT = """You are a comic storyboard artist. Split the story below into {scene_count} shots.
 
-只输出 JSON 数组，格式：
-[{{"title":"第1幕","narration":"旁白一句话","dialogue":"角色台词或空","image_prompt":"画面描述，含人物外貌动作场景光线，40字内","characters":["角色名"]}}]
+Output ONLY a JSON array in this exact format:
+[{{"title":"shot 1","narration":"one sentence narration in Chinese","dialogue":"character line in Chinese or empty","image_prompt":"ENGLISH scene description for an image model: subject appearance + action + environment + lighting, under 35 words","characters":["name"]}}]
 
-画风：{style}
+Rules: keep the same character appearance across shots; image_prompt MUST be in English; narration/dialogue in Chinese.
 
-故事：
+Style: {style_en}
+
+Story:
 {script}
 
-JSON 数组：
+JSON array:
 """
 
 
@@ -207,7 +226,7 @@ def _storyboard_cloud(cfg, script, style, scene_count):
 
 def _storyboard_local(script, style, scene_count):
     prompt = LOCAL_STORYBOARD_PROMPT.format(
-        scene_count=scene_count, style=style_prompt(style), script=script[:1200])
+        scene_count=scene_count, style_en=style_prompt_en(style), script=script[:1200])
     for _ in range(2):
         try:
             raw = local_llm.chat(prompt, max_new_tokens=1100)
@@ -264,7 +283,8 @@ def gen_image(prompt: str, project_dir: str, style: str = "", aspect: str = "9:1
             backend = "local"
 
     if backend == "local":
-        return _image_local(cfg.get("local", {}), full_prompt, project_dir, aspect), "local"
+        return _image_local(cfg.get("local", {}), full_prompt, project_dir,
+                            aspect, style), "local"
 
     filename = "img_%s.png" % uuid.uuid4().hex[:10]
     _mock_image(full_prompt, os.path.join(project_dir, filename), aspect)
@@ -308,12 +328,15 @@ def _image_cloud(cfg, full_prompt, project_dir, aspect, ref_image):
     raise RuntimeError("云端生图失败：" + last_err)
 
 
-def _image_local(local_cfg, full_prompt, project_dir, aspect):
+def _image_local(local_cfg, full_prompt, project_dir, aspect, style=""):
     filename = "img_%s.jpeg" % uuid.uuid4().hex[:10]
     filepath = os.path.join(project_dir, filename)
+    # 本地 SD1.5 只认英文：提示词不含英文时，追加英文画风关键词兜底
+    if not re.search(r"[A-Za-z]", full_prompt):
+        full_prompt = (full_prompt + ", " + style_prompt_en(style)).strip(", ")
     local_image.generate(
         full_prompt, filepath, aspect=aspect,
-        steps=int(local_cfg.get("steps", 6)),
+        steps=int(local_cfg.get("steps", 4)),
         guidance=float(local_cfg.get("guidance", 1.6)),
         seed=int(local_cfg.get("seed", -1)),
     )
