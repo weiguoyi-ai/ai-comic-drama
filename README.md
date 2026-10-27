@@ -1,8 +1,12 @@
 # 🎬 AI 漫剧工坊 (AI Comic Drama Studio)
 
+<p align="center">
+  <img src="docs/preview.jpg" width="720" alt="AI 漫剧工坊效果预览">
+</p>
+
 一个开源的 **AI 漫剧（漫画短剧）制作工具**：输入故事或剧本，AI 自动生成分镜脚本、每幕画面、角色配音与字幕，一键合成为完整短视频。
 
-![流程](https://img.shields.io/badge/流程-剧本→分镜→生图→配音→成片-4f5df0)
+**支持三种运行模式**：云端 API（画质最佳）/ **全本地离线（永久 0 元、断网可用）** / 自动切换。
 
 ## ✨ 功能
 
@@ -55,10 +59,12 @@ python server.py
 
 然后把 `config.json` 里的 `"mode"` 改成 `"local"`，即可**断网使用、不花一分钱**。
 
-- 生图：SD1.5（可替换为 DreamShaper/Anything 等任意 SD1.5 动漫模型）+ LCM 加速，512×896 → 放大到 720×1280，
-  在 i5-1135G7 纯 CPU 实测约 **3–6 分钟/张**（无独显的物理上限；有 NVIDIA 显卡会快 20 倍以上）
-- 分镜：Qwen2.5-1.5B-Instruct，纯 CPU 实测约 **1–1.5 分钟**
-- 配音：Piper 离线声线（秒级；模型缺失时自动用 edge-tts）
+- 生图：SD1.5（可替换为 DreamShaper/Anything 等任意 SD1.5 动漫模型）+ LCM 4 步加速 + channels_last 优化，
+  在 i5-1135G7 纯 CPU 实测 **约 3~3.7 分钟/张**（`quality: fast` 约 3.2 分钟，`normal` 约 3.7 分钟；
+  无独显的物理上限，有 NVIDIA 显卡会快 20 倍以上）
+- 分镜：Qwen2.5-1.5B-Instruct，纯 CPU 实测约 **1~1.5 分钟**
+- 配音：Piper 或 Windows SAPI 中文语音（完全离线、秒级）；都不可用时自动回退 edge-tts（需联网）
+- 画质档位（`config.json → local.quality`）：`fast`（448×768）/ `normal`（512×896，默认）/ `high`（576×1024）
 - 想换更二次元的画风：把任意 SD1.5 动漫模型文件替换进 `models/sd-base/` 即可
 
 > 本地模式是「不花钱」的代价换「慢 + 画质中等」。追求参考视频那种质感，仍推荐云端 Seedream。
@@ -114,22 +120,37 @@ python server.py
 
 ```
 ai-comic-drama/
-├── server.py          # FastAPI 后端 + API
-├── providers.py       # AI Provider 适配层（LLM/生图/TTS，mock 与真实可切换）
-├── compose.py         # ffmpeg 视频合成管线
-├── static/index.html  # 网页前端
-├── config.example.json# 模型配置模板
-├── requirements.txt
-└── projects/          # 每个项目的图片、音频、成片输出
+├── server.py           # FastAPI 后端 + API
+├── providers.py        # AI Provider 适配层（auto/local/cloud 三模式切换）
+├── compose.py          # ffmpeg 视频合成管线（Ken Burns + 字幕烧录）
+├── local_image.py      # 本地生图（SD1.5 + LCM，纯 CPU）
+├── local_llm.py        # 本地分镜（Qwen2.5-1.5B）
+├── local_tts.py        # 本地配音（Piper / Windows SAPI）
+├── download_models.py  # 本地模型一键下载（ModelScope 国内源）
+├── check_ark.py        # 云端 API Key 自检脚本
+├── static/index.html   # 网页前端
+├── config.example.json # 模型配置模板
+├── requirements.txt / requirements-local.txt
+├── 启动.bat            # Windows 一键启动
+└── projects/           # 每个项目的图片、音频、成片输出
 ```
+
+## ❓ 常见问题
+
+- **piper-tts 1.8.0 的 Windows 轮子有已知 bug**（espeak 数据路径编译期写死，中文合成出空音频），
+  本项目已自动处理：检测到空音频会切换到 Windows SAPI 离线语音，无需干预
+- **视频合成在中文用户名路径下失败**？已修复：concat/字幕阶段在项目目录内以相对路径执行
+- 本地生图慢？把 `config.json` 里 `local.quality` 改为 `"fast"`、`steps` 改为 `3`，约 2.5 分钟/张
 
 ## 🗺 Roadmap
 
-- [ ] 角色一致性增强（参考图 / IP-Adapter）
+- [x] 竖屏 9:16 输出适配抖音/快手
+- [x] 零费用全本地离线模式（SD + Qwen + Piper/SAPI）
+- [x] 角色一致性（Seedream 参考图图生图）
 - [ ] 多角色多音色配音分配
 - [ ] 背景音乐自动混音
-- [ ] 竖屏 9:16 输出适配抖音/快手
+- [ ] IP-Adapter 本地角色一致性
 
 ## License
 
-MIT
+[MIT](LICENSE) © 2026 魏果毅 (Wei Guoyi)

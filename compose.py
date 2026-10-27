@@ -13,8 +13,8 @@ import subprocess
 import providers
 
 
-def _run(cmd):
-    r = subprocess.run(cmd, capture_output=True, text=True)
+def _run(cmd, cwd: str = None):
+    r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd)
     if r.returncode != 0:
         raise RuntimeError("ffmpeg 失败: " + r.stderr[-1500:])
 
@@ -77,25 +77,25 @@ def compose(scenes, project_dir: str, aspect: str = "16:9") -> str:
         seg_files.append(seg)
         durations.append(dur)
 
-    # 拼接
+    # 拼接（用相对文件名 + cwd=project_dir，规避中文路径下 concat demuxer 的兼容问题）
     concat_list = os.path.join(project_dir, "concat.txt")
     with open(concat_list, "w", encoding="utf-8") as f:
         for seg in seg_files:
-            f.write("file '%s'\n" % seg.replace("\\", "/"))
+            f.write("file '%s'\n" % os.path.basename(seg))
     joined = os.path.join(project_dir, "joined.mp4")
     ffmpeg = providers._ffmpeg_bin()
-    _run([ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", concat_list,
-          "-c", "copy", joined])
+    _run([ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", "concat.txt",
+          "-c", "copy", "joined.mp4"], cwd=project_dir)
 
     # 字幕
     srt = os.path.join(project_dir, "subs.srt")
     _build_srt(scenes, durations, srt)
-    srt_ff = srt.replace("\\", "/").replace(":", "\\:")
     output = os.path.join(project_dir, "final.mp4")
-    _run([ffmpeg, "-y", "-i", joined,
-          "-vf", "subtitles='%s':force_style='FontName=Microsoft YaHei,FontSize=16,"
-                 "PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=1,Outline=1,MarginV=28'" % srt_ff,
-          "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "copy", output])
+    _run([ffmpeg, "-y", "-i", "joined.mp4",
+          "-vf", "subtitles=subs.srt:force_style='FontName=Microsoft YaHei,FontSize=16,"
+                 "PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=1,Outline=1,MarginV=28'",
+          "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "copy", "final.mp4"],
+         cwd=project_dir)
 
     # 清理中间文件
     for seg in seg_files:

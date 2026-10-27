@@ -20,8 +20,11 @@
     "voice": "zh-CN-XiaoxiaoNeural"
   },
   "local": {
-    "steps": 6,
+    "steps": 4,
     "guidance": 1.6,
-    "seed": -1
+    "seed": -1,
+    "quality": "normal",
+    "threads": 0,
+    "low_mem": false
   }
 }

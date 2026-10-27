@@ -48,7 +48,7 @@ def load_config() -> dict:
         if env_key:
             cfg[section]["api_key"] = env_key
     cfg.setdefault("tts", {"engine": "auto", "voice": "zh-CN-XiaoxiaoNeural"})
-    cfg.setdefault("local", {"steps": 6, "guidance": 1.6})
+    cfg.setdefault("local", {"steps": 4, "guidance": 1.6, "quality": "normal"})
     return cfg
 
 
@@ -339,6 +339,9 @@ def _image_local(local_cfg, full_prompt, project_dir, aspect, style=""):
         steps=int(local_cfg.get("steps", 4)),
         guidance=float(local_cfg.get("guidance", 1.6)),
         seed=int(local_cfg.get("seed", -1)),
+        preset=str(local_cfg.get("quality", "normal")),
+        threads=int(local_cfg.get("threads", 0)),
+        low_mem=bool(local_cfg.get("low_mem", False)),
     )
     return filename
 
@@ -387,7 +390,11 @@ def gen_tts(text: str, voice: str, project_dir: str) -> tuple:
     if use_local:
         try:
             wav = local_tts.synth(text, project_dir)
-            return local_tts.wav_to_mp3(os.path.join(project_dir, wav)), "piper"
+            wav_path = os.path.join(project_dir, wav)
+            if _wav_duration_ok(wav_path):
+                return local_tts.wav_to_mp3(wav_path), "local"
+            # Piper 音素化失败会产出空音频（0 帧），视为失败并回退
+            os.remove(wav_path)
         except Exception:
             if engine == "piper":
                 raise
@@ -408,6 +415,16 @@ def gen_tts(text: str, voice: str, project_dir: str) -> tuple:
 
 
 # ---------------------------------------------------------------- 工具
+
+def _wav_duration_ok(path: str, min_sec: float = 0.5) -> bool:
+    """检查 WAV 是否包含有效语音（防止 Piper 音素化失败产出空音频）。"""
+    try:
+        import wave, contextlib
+        with contextlib.closing(wave.open(path)) as w:
+            return w.getnframes() / max(1, w.getframerate()) >= min_sec
+    except Exception:
+        return False
+
 
 def _short(text: str, n: int = 300) -> str:
     return (text or "").replace("\n", " ")[:n]

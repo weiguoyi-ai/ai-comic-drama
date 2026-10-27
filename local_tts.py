@@ -1,7 +1,11 @@
 # -*- coding: utf-8 -*-
-"""本地配音：Piper（离线、CPU 秒级出音）。
+"""本地配音（离线、免费）。
 
-Piper 模型缺失时自动回退到 edge-tts（免费但需联网）。
+优先级：
+1. Piper（音质好；注意 piper-tts 1.8.0 的 Windows 轮子有 espeak 路径 bug，
+   合成出空音频时自动跳过）
+2. Windows SAPI 语音（系统自带 zh-CN 语音包，完全离线、零依赖）
+3. 都不可用时抛错，由 providers 回退 edge-tts（免费但需联网）
 """
 
 import os
@@ -15,10 +19,12 @@ ONNX = os.path.join(PIPER_DIR, "zh_CN-huayan-medium.onnx")
 CONFIG = ONNX + ".json"
 
 _voice = None
+_piper_broken = False   # piper 产出空音频时置 True，避免每次都白跑
 
 
 def is_ready() -> bool:
-    return os.path.exists(ONNX) and os.path.exists(CONFIG)
+    """本地是否有可用的离线配音能力（Piper 模型或 Windows SAPI 中文语音）。"""
+    return (os.path.exists(ONNX) and os.path.exists(CONFIG)) or _sapi_has_zh()
 
 
 def _load():
@@ -30,20 +36,89 @@ def _load():
     return _voice
 
 
-def synth(text: str, out_dir: str) -> str:
-    """用 Piper 合成语音，返回 wav 文件名。"""
+# ---------------------------------------------------------------- Piper
+
+def _piper_synth(text: str, path: str) -> None:
     voice = _load()
-    name = "tts_%s.wav" % uuid.uuid4().hex[:10]
-    path = os.path.join(out_dir, name)
     sample_rate = getattr(getattr(voice, "config", None), "sample_rate", 22050)
     with wave.open(path, "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
         wav.setframerate(sample_rate)
+        voice.synthesize(text, wav)
+
+
+def _wav_seconds(path: str) -> float:
+    try:
+        with wave.open(path) as w:
+            return w.getnframes() / max(1, w.getframerate())
+    except Exception:
+        return 0.0
+
+
+# ---------------------------------------------------------------- Windows SAPI
+
+def _sapi_has_zh() -> bool:
+    try:
+        import win32com.client
+        v = win32com.client.Dispatch("SAPI.SPVoice")
+        return v.GetVoices("Language=804").Count > 0
+    except Exception:
+        return False
+
+
+def _sapi_synth(text: str, path: str) -> None:
+    """用 Windows 自带语音合成 WAV（完全离线）。"""
+    import pythoncom
+    import win32com.client
+
+    pythoncom.CoInitialize()
+    try:
+        voice = win32com.client.Dispatch("SAPI.SPVoice")
         try:
-            voice.synthesize(text, wav)          # piper-tts >= 1.2
-        except TypeError:                        # 旧版 API
-            voice.synthesize_wav(text, wav)
+            zh = voice.GetVoices("Language=804")
+            if zh.Count > 0:
+                voice.Voice = zh.Item(0)
+        except Exception:
+            pass  # 没有中文语音包就用默认语音
+        stream = win32com.client.Dispatch("SAPI.SpFileStream")
+        stream.Open(path, 3)          # SSFMCreateForWrite
+        voice.AudioOutputStream = stream
+        try:
+            voice.Speak(text)
+        finally:
+            voice.AudioOutputStream = None
+            stream.Close()
+    finally:
+        pythoncom.CoUninitialize()
+
+
+# ---------------------------------------------------------------- 对外接口
+
+def synth(text: str, out_dir: str) -> str:
+    """离线合成语音，返回 wav 文件名；失败抛异常。"""
+    global _piper_broken
+    name = "tts_%s.wav" % uuid.uuid4().hex[:10]
+    path = os.path.join(out_dir, name)
+
+    # 1) Piper（若 wheel 正常）
+    if not _piper_broken and os.path.exists(ONNX) and os.path.exists(CONFIG):
+        try:
+            _piper_synth(text, path)
+            if _wav_seconds(path) >= 0.5:
+                return name
+            _piper_broken = True     # 空音频 → piper 环境有问题，后续不再尝试
+        except Exception:
+            _piper_broken = True
+        finally:
+            if _piper_broken and os.path.exists(path):
+                os.remove(path)
+
+    # 2) Windows SAPI（系统自带，完全离线）
+    _sapi_synth(text, path)
+    if _wav_seconds(path) < 0.5:
+        os.remove(path)
+        raise RuntimeError("Windows SAPI 合成失败（请检查系统语音包）")
     return name
 
 
