@@ -64,8 +64,13 @@ def _build_srt(scenes, durations, srt_path: str):
         f.write("\n".join(lines))
 
 
-def compose(scenes, project_dir: str, aspect: str = "16:9") -> str:
-    """合成完整视频。scenes 每项含 image/tts 文件名，返回输出视频文件名。"""
+def compose(scenes, project_dir: str, aspect: str = "16:9",
+            bgm: str = "", bgm_volume: float = -1) -> str:
+    """合成完整视频。scenes 每项含 image/tts 文件名，返回输出视频文件名。
+
+    bgm：背景音乐文件路径（空字符串则按配置自动挑选，指定 "none" 则不加背景乐）
+    bgm_volume：背景音乐音量（0~1），小于 0 时读取配置
+    """
     w, h = (720, 1280) if aspect == "9:16" else (1280, 720)
     seg_files, durations = [], []
     for i, sc in enumerate(scenes):
@@ -87,11 +92,31 @@ def compose(scenes, project_dir: str, aspect: str = "16:9") -> str:
     _run([ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", "concat.txt",
           "-c", "copy", "joined.mp4"], cwd=project_dir)
 
+    # 背景音乐：与配音混音（循环铺满、音量压低、结尾淡出）
+    mixed = joined
+    music = "" if bgm == "none" else (providers.pick_bgm(bgm) if bgm else providers.pick_bgm())
+    if music:
+        cfg = providers.load_config().get("bgm", {})
+        vol = bgm_volume if bgm_volume >= 0 else float(cfg.get("volume", 0.12))
+        total = sum(durations)
+        mixed = os.path.join(project_dir, "joined_mixed.mp4")
+        try:
+            _run([ffmpeg, "-y", "-i", "joined.mp4",
+                  "-stream_loop", "-1", "-i", music,
+                  "-filter_complex",
+                  f"[1:a]volume={vol:.3f},afade=t=out:st={max(0.0, total - 2):.2f}:d=2[bg];"
+                  f"[0:a][bg]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[a]",
+                  "-map", "0:v", "-map", "[a]",
+                  "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-shortest",
+                  "joined_mixed.mp4"], cwd=project_dir)
+        except Exception:
+            mixed = joined   # 混音失败不影响出片
+
     # 字幕
     srt = os.path.join(project_dir, "subs.srt")
     _build_srt(scenes, durations, srt)
     output = os.path.join(project_dir, "final.mp4")
-    _run([ffmpeg, "-y", "-i", "joined.mp4",
+    _run([ffmpeg, "-y", "-i", os.path.basename(mixed),
           "-vf", "subtitles=subs.srt:force_style='FontName=Microsoft YaHei,FontSize=16,"
                  "PrimaryColour=&H00FFFFFF,OutlineColour=&H80000000,BorderStyle=1,Outline=1,MarginV=28'",
           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "copy", "final.mp4"],
@@ -103,7 +128,7 @@ def compose(scenes, project_dir: str, aspect: str = "16:9") -> str:
             os.remove(seg)
         except OSError:
             pass
-    for tmp in (concat_list, joined, srt):
+    for tmp in (concat_list, joined, mixed, srt):
         try:
             os.remove(tmp)
         except OSError:

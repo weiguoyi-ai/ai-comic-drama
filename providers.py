@@ -28,6 +28,33 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 
 ARK_BASE = "https://ark.cn-beijing.volces.com/api/v3"
 
+# 可选中文音色（edge-tts）。本地 SAPI 只有一个中文音色，靠语速区分角色
+VOICES = [
+    {"id": "zh-CN-XiaoxiaoNeural", "label": "晓晓 · 温柔女声", "gender": "女"},
+    {"id": "zh-CN-XiaoyiNeural", "label": "晓伊 · 少女音", "gender": "女"},
+    {"id": "zh-CN-YunxiNeural", "label": "云希 · 少年音", "gender": "男"},
+    {"id": "zh-CN-YunxiaNeural", "label": "云夏 · 稚气男声", "gender": "男"},
+    {"id": "zh-CN-YunjianNeural", "label": "云健 · 沉稳男声", "gender": "男"},
+    {"id": "zh-CN-liaoning-XiaobeiNeural", "label": "晓北 · 东北女声", "gender": "女"},
+]
+
+DEFAULT_VOICE_MAP = {
+    "旁白": {"voice": "zh-CN-XiaoxiaoNeural", "rate": -4},
+    "女主": {"voice": "zh-CN-XiaoyiNeural", "rate": 0},
+    "男主": {"voice": "zh-CN-YunxiNeural", "rate": 0},
+    "老人": {"voice": "zh-CN-YunjianNeural", "rate": -10},
+    "小孩": {"voice": "zh-CN-YunxiaNeural", "rate": 6},
+}
+
+# 未知角色名的音色池（哈希稳定分配，保证同一角色前后一致）
+CHARACTER_VOICES = [
+    "zh-CN-XiaoyiNeural",
+    "zh-CN-YunxiNeural",
+    "zh-CN-YunxiaNeural",
+    "zh-CN-YunjianNeural",
+    "zh-CN-liaoning-XiaobeiNeural",
+]
+
 
 # ---------------------------------------------------------------- 配置
 
@@ -48,8 +75,75 @@ def load_config() -> dict:
         if env_key:
             cfg[section]["api_key"] = env_key
     cfg.setdefault("tts", {"engine": "auto", "voice": "zh-CN-XiaoxiaoNeural"})
+    cfg["tts"].setdefault("voice", "zh-CN-XiaoxiaoNeural")
+    cfg["tts"].setdefault("voice_map", dict(DEFAULT_VOICE_MAP))
+    cfg.setdefault("bgm", {"enabled": True, "path": "", "volume": 0.12})
     cfg.setdefault("local", {"steps": 4, "guidance": 1.6, "quality": "normal"})
     return cfg
+
+
+def resolve_voice(speaker: str, cfg: dict = None, project_dir: str = "") -> dict:
+    """按角色名解析音色与语速。
+
+    优先级：voice_map 完全匹配 → 模糊包含 →
+    项目内的角色-音色分配表（新角色自动取一个尚未占用的音色并记住）→ 默认音色。
+    这样同一角色在各幕音色一致，不同角色尽量不撞车。
+    """
+    cfg = cfg or load_config()
+    tts = cfg.get("tts", {})
+    voice_map = tts.get("voice_map") or {}
+    default = {"voice": tts.get("voice") or "zh-CN-XiaoxiaoNeural", "rate": 0}
+    speaker = (speaker or "").strip()
+    if not speaker:
+        return default
+    if speaker in voice_map:
+        return _norm_voice(voice_map[speaker], default)
+    for key, val in voice_map.items():
+        if key and (key in speaker or speaker in key):
+            return _norm_voice(val, default)
+    if project_dir:
+        assigned = _assign_character_voice(speaker, project_dir, default["voice"])
+        if assigned:
+            return {"voice": assigned, "rate": 0}
+    return default
+
+
+def _assign_character_voice(speaker: str, project_dir: str, narrator_voice: str) -> str:
+    """在项目目录内维护「角色 → 音色」分配表，新角色取未被占用的音色。"""
+    path = os.path.join(project_dir, "_voices.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            table = json.load(f)
+    except Exception:
+        table = {}
+    if speaker in table:
+        return table[speaker]
+
+    pool = [v for v in CHARACTER_VOICES if v != narrator_voice]
+    used = set(table.values())
+    free = [v for v in pool if v not in used]
+    # 音色用完之后，按最少使用次数挑一个
+    if not free:
+        counts = {v: 0 for v in pool}
+        for v in table.values():
+            counts[v] = counts.get(v, 0) + 1
+        free = [min(pool, key=lambda v: counts.get(v, 0))]
+    table[speaker] = free[0]
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(table, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+    return table[speaker]
+
+
+def _norm_voice(val, default):
+    if isinstance(val, str):
+        return {"voice": val, "rate": 0}
+    if isinstance(val, dict):
+        return {"voice": val.get("voice") or default["voice"],
+                "rate": int(val.get("rate", 0) or 0)}
+    return dict(default)
 
 
 def _has_key(cfg: dict) -> bool:
@@ -84,9 +178,37 @@ def config_status() -> dict:
                   "model": cfg["image"].get("model", ""),
                   "local_model": "SD1.5 DreamShaper8 + LCM"},
         "tts": {"backend": "local" if tts_local else "cloud",
-                "engine": "Piper（离线）" if tts_local else "edge-tts（在线免费）"},
+                "engine": "Piper（离线）" if tts_local else "edge-tts（在线免费）",
+                "voices": VOICES,
+                "voice_map": {k: v for k, v in (cfg["tts"].get("voice_map") or {}).items()}},
+        "bgm": {"enabled": bool(cfg.get("bgm", {}).get("enabled", True)),
+                "tracks": _bgm_tracks()},
         "local_ready": {"image": img_local, "llm": llm_local, "tts": tts_local},
     }
+
+
+def _bgm_tracks() -> list:
+    """可用的背景音乐文件（assets/bgm 目录下的 mp3/wav/m4a）。"""
+    d = os.path.join(ROOT, "assets", "bgm")
+    if not os.path.isdir(d):
+        return []
+    return sorted(f for f in os.listdir(d)
+                  if f.lower().endswith((".mp3", ".wav", ".m4a", ".ogg")))
+
+
+def pick_bgm(path: str = "") -> str:
+    """确定背景音乐文件：指定则用之，否则从 assets/bgm 随机选一首；无则返回空串。"""
+    cfg = load_config().get("bgm", {})
+    if not cfg.get("enabled", True):
+        return ""
+    if path:
+        p = path if os.path.isabs(path) else os.path.join(ROOT, path)
+        return p if os.path.exists(p) else ""
+    tracks = _bgm_tracks()
+    if not tracks:
+        return ""
+    import random
+    return os.path.join(ROOT, "assets", "bgm", random.choice(tracks))
 
 
 # ---------------------------------------------------------------- 画风预设
@@ -133,10 +255,12 @@ STORYBOARD_PROMPT = """你是一名专业漫剧分镜师。请把下面的故事
 要求：
 1. 主要角色的外貌特征必须统一（发型、发色、服装、气质），每格画面都要能看出是同一个人；
 2. 每个分镜包含：title（分镜标题）、narration（旁白，1-2句，口语化）、dialogue（角色台词，可为空字符串）、
+   speaker（说这句台词的角色名；没有台词时为空字符串）、
    image_prompt（画面描述，中文，60字以内，写清：人物外貌+动作表情+场景+镜头景别+光线氛围）、
    characters（该分镜出场角色名数组）；
-3. 只输出 JSON 数组，不要输出任何解释文字。格式：
-[{{"title":"...","narration":"...","dialogue":"...","image_prompt":"...","characters":["..."]}}]
+3. 角色名要简短固定（如"林晚""老张""旁白"），同一角色在不同分镜必须用完全相同的名字，便于配音分配；
+4. 只输出 JSON 数组，不要输出任何解释文字。格式：
+[{{"title":"...","narration":"...","dialogue":"...","speaker":"...","image_prompt":"...","characters":["..."]}}]
 
 画风要求：{style}
 
@@ -144,19 +268,26 @@ STORYBOARD_PROMPT = """你是一名专业漫剧分镜师。请把下面的故事
 {script}
 """
 
-LOCAL_STORYBOARD_PROMPT = """You are a comic storyboard artist. Split the story below into {scene_count} shots.
+LOCAL_STORYBOARD_PROMPT = """你是漫剧分镜师，把下面的故事拆成 {scene_count} 个分镜。
 
-Output ONLY a JSON array in this exact format:
-[{{"title":"shot 1","narration":"one sentence narration in Chinese","dialogue":"character line in Chinese or empty","image_prompt":"ENGLISH scene description for an image model: subject appearance + action + environment + lighting, under 35 words","characters":["name"]}}]
+严格规则（必须遵守）：
+1. 只输出 JSON 数组，不要任何解释、不要 markdown 代码块；
+2. 每一项都必须是完整对象，四个文字字段都不许留空：
+   - title：分镜小标题（6字内，各不相同）
+   - narration：旁白，中文，15~30字，必须有内容，用来讲清楚剧情
+   - dialogue：角色台词，中文，10~25字，写角色真正说的话；若这一幕是纯场景，写"……"之外的简短心理独白
+   - speaker：说这句台词的角色名（如 林晚 / 沈书白 / 旁白），与 characters 中的名字完全一致
+   - image_prompt：英文画面描述，写清人物外貌+动作+场景+光线，不超过 35 个单词
+   - characters：出场角色名数组，同一角色在各分镜中用完全相同的名字
+3. 画风：{style_en}
 
-Rules: keep the same character appearance across shots; image_prompt MUST be in English; narration/dialogue in Chinese.
+输出格式示例：
+[{{"title":"雪巅相候","narration":"三百年来她守着雪山，只为等他归来。","dialogue":"你终于来了。","speaker":"林晚","image_prompt":"a white-haired woman in ice-blue silk robes standing on a snowy peak, ethereal glow, cinematic lighting, anime style","characters":["林晚"]}}]
 
-Style: {style_en}
-
-Story:
+故事：
 {script}
 
-JSON array:
+JSON 数组：
 """
 
 
@@ -176,11 +307,21 @@ def _normalize(scenes, count):
     for i, sc in enumerate(scenes[:count] if count else scenes, 1):
         if not isinstance(sc, dict):
             continue
+        title = str(sc.get("title") or f"第{i}幕")
+        narration = str(sc.get("narration") or "").strip()
+        dialogue = str(sc.get("dialogue") or "").strip()
+        speaker = str(sc.get("speaker") or "").strip()
+        # 小模型常把旁白留空：用台词或标题兜底，保证字幕和配音有内容
+        if not narration:
+            narration = dialogue or title
+        if not dialogue:
+            speaker = ""
         out.append({
-            "title": str(sc.get("title") or f"第{i}幕"),
-            "narration": str(sc.get("narration") or ""),
-            "dialogue": str(sc.get("dialogue") or ""),
-            "image_prompt": str(sc.get("image_prompt") or sc.get("narration") or ""),
+            "title": title,
+            "narration": narration,
+            "dialogue": dialogue,
+            "speaker": speaker,
+            "image_prompt": str(sc.get("image_prompt") or narration),
             "characters": sc.get("characters") or [],
             "image": "", "tts": "",
         })
@@ -382,14 +523,29 @@ def _mock_image(prompt: str, filepath: str, aspect: str):
 
 # ---------------------------------------------------------------- 配音
 
-def gen_tts(text: str, voice: str, project_dir: str) -> tuple:
-    """生成配音，返回 (音频文件名, engine)。优先本地 Piper，缺失则 edge-tts。"""
+# 本地只有一个中文声线，用固定语速偏移模拟不同角色的声音差异
+LOCAL_VOICE_RATE = {
+    "zh-CN-XiaoxiaoNeural": -3,
+    "zh-CN-XiaoyiNeural": 5,
+    "zh-CN-YunxiNeural": 0,
+    "zh-CN-YunxiaNeural": 8,
+    "zh-CN-YunjianNeural": -8,
+    "zh-CN-liaoning-XiaobeiNeural": 3,
+}
+
+
+def gen_tts(text: str, voice: str, project_dir: str, rate: int = 0) -> tuple:
+    """生成配音，返回 (音频文件名, engine)。优先本地离线，缺失则 edge-tts。
+
+    rate：语速百分比（-50~+50），用于区分角色；本地 SAPI 会折算到 -10~10 档。
+    """
     cfg = load_config()
     engine = cfg.get("tts", {}).get("engine", "auto")
     use_local = local_tts.is_ready() and engine in ("auto", "piper")
     if use_local:
         try:
-            wav = local_tts.synth(text, project_dir)
+            local_rate = rate + LOCAL_VOICE_RATE.get(voice, 0)
+            wav = local_tts.synth(text, project_dir, rate=local_rate)
             wav_path = os.path.join(project_dir, wav)
             if _wav_duration_ok(wav_path):
                 return local_tts.wav_to_mp3(wav_path), "local"
@@ -403,7 +559,8 @@ def gen_tts(text: str, voice: str, project_dir: str) -> tuple:
     try:
         import asyncio
         import edge_tts
-        asyncio.run(edge_tts.Communicate(text, voice).save(filepath))
+        rate_str = "%+d%%" % int(rate) if rate else "+0%"
+        asyncio.run(edge_tts.Communicate(text, voice, rate=rate_str).save(filepath))
         return filename, "edge-tts"
     except Exception:
         import subprocess

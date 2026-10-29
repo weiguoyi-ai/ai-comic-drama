@@ -29,6 +29,7 @@ class Scene(BaseModel):
     title: str = ""
     narration: str = ""
     dialogue: str = ""
+    speaker: str = ""
     image: str = ""
     tts: str = ""
 
@@ -44,13 +45,17 @@ class ImageReq(BaseModel):
 class TtsReq(BaseModel):
     project_id: str
     text: str
-    voice: str = "zh-CN-YunxiNeural"
+    voice: str = ""       # 留空则按 speaker 自动分配
+    speaker: str = ""     # 角色名，用于音色映射
+    rate: int = 0         # 语速百分比 -50~50
 
 
 class ComposeReq(BaseModel):
     project_id: str
     scenes: list[Scene]
     aspect: str = "9:16"
+    bgm: str = ""         # 空=自动挑选，"none"=不加背景乐，或指定文件路径
+    bgm_volume: float = -1
 
 
 @app.get("/api/config")
@@ -88,8 +93,13 @@ def api_image(req: ImageReq):
 def api_tts(req: TtsReq):
     try:
         project_dir = _ensure_project(req.project_id)
-        filename, engine = providers.gen_tts(req.text, req.voice, project_dir)
-        return {"tts": filename, "engine": engine}
+        if req.voice:
+            voice, rate = req.voice, req.rate
+        else:
+            resolved = providers.resolve_voice(req.speaker, project_dir=project_dir)
+            voice, rate = resolved["voice"], resolved["rate"]
+        filename, engine = providers.gen_tts(req.text, voice, project_dir, rate)
+        return {"tts": filename, "engine": engine, "voice": voice, "rate": rate}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
@@ -99,7 +109,8 @@ def api_compose(req: ComposeReq):
     try:
         project_dir = _ensure_project(req.project_id)
         filename = compose.compose([s.model_dump() for s in req.scenes],
-                                   project_dir, req.aspect)
+                                   project_dir, req.aspect,
+                                   bgm=req.bgm, bgm_volume=req.bgm_volume)
         return {"video": "/api/file/" + req.project_id + "/" + filename}
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})

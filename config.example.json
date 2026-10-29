@@ -17,7 +17,19 @@
   },
   "tts": {
     "engine": "auto",
-    "voice": "zh-CN-XiaoxiaoNeural"
+    "voice": "zh-CN-XiaoxiaoNeural",
+    "voice_map": {
+      "旁白": { "voice": "zh-CN-XiaoxiaoNeural", "rate": -4 },
+      "女主": { "voice": "zh-CN-XiaoyiNeural", "rate": 0 },
+      "男主": { "voice": "zh-CN-YunxiNeural", "rate": 0 },
+      "老人": { "voice": "zh-CN-YunjianNeural", "rate": -10 },
+      "小孩": { "voice": "zh-CN-YunxiaNeural", "rate": 6 }
+    }
+  },
+  "bgm": {
+    "enabled": true,
+    "path": "",
+    "volume": 0.12
   },
   "local": {
     "steps": 4,

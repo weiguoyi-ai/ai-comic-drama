@@ -4,6 +4,16 @@
   <img src="docs/preview.jpg" width="720" alt="AI 漫剧工坊效果预览">
 </p>
 
+<p align="center">
+  <a href="README.en.md">English</a> · <b>简体中文</b>
+</p>
+
+<p align="center">
+  <a href="https://github.com/weiguoyi-ai/ai-comic-drama/actions/workflows/ci.yml"><img src="https://github.com/weiguoyi-ai/ai-comic-drama/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/python-3.10%2B-3776ab" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT">
+</p>
+
 一个开源的 **AI 漫剧（漫画短剧）制作工具**：输入故事或剧本，AI 自动生成分镜脚本、每幕画面、角色配音与字幕，一键合成为完整短视频。
 
 **支持三种运行模式**：云端 API（画质最佳）/ **全本地离线（永久 0 元、断网可用）** / 自动切换。
@@ -12,9 +22,10 @@
 
 | 模块 | 说明 |
 |---|---|
-| 📝 剧本转分镜 | 调用 LLM 把小说/剧本改编为结构化分镜（标题/旁白/台词/画面描述） |
+| 📝 剧本转分镜 | 调用 LLM 把小说/剧本改编为结构化分镜（标题/旁白/台词/**说话角色**/画面描述） |
 | 🖼 分镜生图 | 火山方舟豆包 Seedream 出图，可用首图作参考保持角色形象一致 |
-| 🎙 AI 配音 | edge-tts 免费语音合成，多种中文音色可选 |
+| 🎭 多角色配音 | **按角色名自动分配音色**，同一角色全程一致、不同角色不撞音；支持逐幕手动指定 |
+| 🎵 背景音乐 | 把音乐丢进 `assets/bgm/`，合成时自动随机挑选并混音（音量 12%、结尾淡出） |
 | 🎬 视频合成 | ffmpeg 自动合成：Ken Burns 动效 + SRT 字幕烧录 → 竖屏 720×1280 / 横屏 1280×720 |
 | 🧪 Mock 模式 | 不配置任何 API Key 也能跑通全流程（占位图 + 静音），方便开发调试 |
 
@@ -116,19 +127,55 @@ python server.py
 - 支持 **9:16 竖屏**（720×1280）与 16:9 横屏（1280×720）
 - 勾选 **角色一致性** 后，第 2 幕起会以首张图作参考图（Seedream 图生图），人物形象更统一
 
+## 🎭 多角色配音
+
+分镜阶段 AI 会给每句台词标注 **说话角色（speaker）**，配音时按角色自动分配音色：
+
+- **同一角色全程一个音色**、不同角色尽量不撞音（分配结果记录在该项目的 `_voices.json` 里）
+- 音色池：晓晓 / 晓伊 / 云希 / 云夏 / 云健 / 晓北，可在界面「本幕音色」逐幕覆盖
+- 想固定某角色的声音，改 `config.json`：
+
+```json
+"tts": {
+  "voice": "zh-CN-XiaoxiaoNeural",
+  "voice_map": {
+    "旁白": { "voice": "zh-CN-XiaoxiaoNeural", "rate": -4 },
+    "女主": { "voice": "zh-CN-XiaoyiNeural", "rate": 0 }
+  }
+}
+```
+
+> `voice_map` 支持「完全匹配」和「模糊包含」（如 `女主` 可命中 `女主林晚`）；
+> 未登记的角色会按字母顺序分配一个尚未占用的音色。
+> 本地 SAPI 模式只有一个中文声线，会用 ±语速（`rate`）来区分角色。
+
+## 🎵 背景音乐
+
+把 `.mp3` / `.wav` / `.m4a` 放进 **`assets/bgm/`**，合成时自动随机挑一首并混音：
+
+```json
+"bgm": { "enabled": true, "path": "", "volume": 0.12 }
+```
+
+- `path` 留空 = 从 `assets/bgm/` 随机选；填文件名 = 固定用那首；`enabled: false` = 关闭
+- `volume` 建议 0.05~0.2，人声不会被盖住；结尾自动 2 秒淡出
+- 界面第三步的「自动加背景音乐」可以临时开关
+- 仓库自带的 `sample_ambient.mp3` 是用 ffmpeg 合成的原创铺底音，可自由使用
+
 ## 📁 项目结构
 
 ```
 ai-comic-drama/
 ├── server.py           # FastAPI 后端 + API
-├── providers.py        # AI Provider 适配层（auto/local/cloud 三模式切换）
-├── compose.py          # ffmpeg 视频合成管线（Ken Burns + 字幕烧录）
+├── providers.py        # AI Provider 适配层（auto/local/cloud 三模式 + 音色分配）
+├── compose.py          # ffmpeg 视频合成管线（Ken Burns + 字幕烧录 + BGM 混音）
 ├── local_image.py      # 本地生图（SD1.5 + LCM，纯 CPU）
 ├── local_llm.py        # 本地分镜（Qwen2.5-1.5B）
 ├── local_tts.py        # 本地配音（Piper / Windows SAPI）
 ├── download_models.py  # 本地模型一键下载（ModelScope 国内源）
 ├── check_ark.py        # 云端 API Key 自检脚本
 ├── static/index.html   # 网页前端
+├── assets/bgm/         # 背景音乐目录（自带一首原创示例）
 ├── config.example.json # 模型配置模板
 ├── requirements.txt / requirements-local.txt
 ├── 启动.bat            # Windows 一键启动
@@ -147,9 +194,11 @@ ai-comic-drama/
 - [x] 竖屏 9:16 输出适配抖音/快手
 - [x] 零费用全本地离线模式（SD + Qwen + Piper/SAPI）
 - [x] 角色一致性（Seedream 参考图图生图）
-- [ ] 多角色多音色配音分配
-- [ ] 背景音乐自动混音
+- [x] 多角色多音色配音（按角色自动分配）
+- [x] 背景音乐自动混音
+- [ ] 背景音乐按情绪自动匹配（分镜情感 → 曲目）
 - [ ] IP-Adapter 本地角色一致性
+- [ ] 一键批量生成多集连播
 
 ## License
 

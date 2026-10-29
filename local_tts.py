@@ -38,14 +38,25 @@ def _load():
 
 # ---------------------------------------------------------------- Piper
 
-def _piper_synth(text: str, path: str) -> None:
+def _piper_synth(text: str, path: str, rate: int = 0) -> None:
     voice = _load()
     sample_rate = getattr(getattr(voice, "config", None), "sample_rate", 22050)
+    syn_cfg = None
+    if rate:
+        try:
+            from piper import SynthesisConfig
+            # length_scale 越大越慢：语速 +20% → length_scale 0.83
+            syn_cfg = SynthesisConfig(length_scale=max(0.5, 1.0 / (1.0 + rate / 100.0)))
+        except Exception:
+            syn_cfg = None
     with wave.open(path, "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
         wav.setframerate(sample_rate)
-        voice.synthesize(text, wav)
+        if syn_cfg is not None:
+            voice.synthesize(text, wav, syn_config=syn_cfg)
+        else:
+            voice.synthesize(text, wav)
 
 
 def _wav_seconds(path: str) -> float:
@@ -67,8 +78,11 @@ def _sapi_has_zh() -> bool:
         return False
 
 
-def _sapi_synth(text: str, path: str) -> None:
-    """用 Windows 自带语音合成 WAV（完全离线）。"""
+def _sapi_synth(text: str, path: str, rate: int = 0) -> None:
+    """用 Windows 自带语音合成 WAV（完全离线）。
+
+    rate 为百分比（-50~50），SAPI 的 Rate 是 -10~10 档，这里做折算。
+    """
     import pythoncom
     import win32com.client
 
@@ -81,6 +95,10 @@ def _sapi_synth(text: str, path: str) -> None:
                 voice.Voice = zh.Item(0)
         except Exception:
             pass  # 没有中文语音包就用默认语音
+        try:
+            voice.Rate = max(-10, min(10, round(rate / 5.0)))
+        except Exception:
+            pass
         stream = win32com.client.Dispatch("SAPI.SpFileStream")
         stream.Open(path, 3)          # SSFMCreateForWrite
         voice.AudioOutputStream = stream
@@ -95,7 +113,7 @@ def _sapi_synth(text: str, path: str) -> None:
 
 # ---------------------------------------------------------------- 对外接口
 
-def synth(text: str, out_dir: str) -> str:
+def synth(text: str, out_dir: str, rate: int = 0) -> str:
     """离线合成语音，返回 wav 文件名；失败抛异常。"""
     global _piper_broken
     name = "tts_%s.wav" % uuid.uuid4().hex[:10]
@@ -104,7 +122,7 @@ def synth(text: str, out_dir: str) -> str:
     # 1) Piper（若 wheel 正常）
     if not _piper_broken and os.path.exists(ONNX) and os.path.exists(CONFIG):
         try:
-            _piper_synth(text, path)
+            _piper_synth(text, path, rate)
             if _wav_seconds(path) >= 0.5:
                 return name
             _piper_broken = True     # 空音频 → piper 环境有问题，后续不再尝试
@@ -115,7 +133,7 @@ def synth(text: str, out_dir: str) -> str:
                 os.remove(path)
 
     # 2) Windows SAPI（系统自带，完全离线）
-    _sapi_synth(text, path)
+    _sapi_synth(text, path, rate)
     if _wav_seconds(path) < 0.5:
         os.remove(path)
         raise RuntimeError("Windows SAPI 合成失败（请检查系统语音包）")

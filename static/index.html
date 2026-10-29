@@ -84,12 +84,14 @@
         <option value="8">8 幕</option>
         <option value="10">10 幕</option>
       </select>
-      <span class="hint">配音音色：</span>
+      <span class="hint">统一音色：</span>
       <select id="voice">
-        <option value="zh-CN-YunxiNeural">男声·云希（阳光青年）</option>
-        <option value="zh-CN-YunyangNeural">男声·云扬（播音腔）</option>
+        <option value="">🎭 按角色自动分配（推荐）</option>
         <option value="zh-CN-XiaoxiaoNeural">女声·晓晓（温柔）</option>
         <option value="zh-CN-XiaoyiNeural">女声·晓伊（活泼）</option>
+        <option value="zh-CN-YunxiNeural">男声·云希（阳光青年）</option>
+        <option value="zh-CN-YunxiaNeural">男声·云夏（稚气）</option>
+        <option value="zh-CN-YunjianNeural">男声·云健（沉稳）</option>
       </select>
       <button class="btn-primary" id="btnStoryboard" onclick="genStoryboard()">✨ 生成分镜</button>
     </div>
@@ -120,7 +122,14 @@
     <h2><span class="step-num">3</span>合成视频</h2>
     <div class="row" style="margin-top:0">
       <button class="btn-primary" id="btnCompose" onclick="composeVideo()">🎬 合成完整漫剧视频</button>
-      <span class="hint">图片 + 配音 + 字幕 → mp4（1280×720）</span>
+      <span class="hint">图片 + 配音 + 字幕 → mp4（720×1280 / 1280×720）</span>
+    </div>
+    <div class="row">
+      <label class="hint" style="display:flex;gap:6px;align-items:center;cursor:pointer">
+        <input type="checkbox" id="useBgm" checked>
+        🎵 自动加背景音乐（把音乐放进 <code>assets/bgm/</code> 目录即可，音量已压到 12%）
+      </label>
+      <span class="hint" id="bgmHint"></span>
     </div>
     <div class="status" id="status3"></div>
     <video id="player" class="hidden" controls></video>
@@ -132,11 +141,18 @@
 const $ = id => document.getElementById(id);
 let projectId = null, scenes = [];
 let firstImage = "";   // 第一张成功生成的图，用作后续分镜的角色参考图
+let VOICE_LIST = [       // 配置加载前的兜底音色表
+  {id: "zh-CN-XiaoxiaoNeural", label: "女声·晓晓（温柔）"},
+  {id: "zh-CN-YunxiNeural", label: "男声·云希（阳光青年）"}
+];
+let VOICE_MAP = {};
 
 /* 启动时检查运行模式与各环节后端 */
 (async function loadConfig() {
   try {
     const c = await (await fetch("/api/config")).json();
+    if (c.tts && c.tts.voices) VOICE_LIST = c.tts.voices;
+    if (c.tts && c.tts.voice_map) VOICE_MAP = c.tts.voice_map;
     const b = $("banner");
     b.classList.remove("hidden");
     const label = {cloud: "☁️ 云端", local: "💻 本地", placeholder: "⬜ 占位"};
@@ -154,11 +170,25 @@ let firstImage = "";   // 第一张成功生成的图，用作后续分镜的角
       tip = `<br>本地模型还没准备好：命令行执行 <code>python download_models.py</code>（约 5-6GB，一次性），
              或填 <code>config.json</code> 里的火山方舟 Key 走云端。`;
     } else if (allLocal) {
-      tip = `<br>当前全部本地运行：不花一分钱、可断网，单张图约 1 分钟，请耐心等待。`;
+      tip = `<br>当前全部本地运行：不花一分钱、可断网，单张图约 3 分钟，请耐心等待。`;
     }
     b.innerHTML = `运行模式：<b>${modeName}</b>　|　` + rows.join("　|　") + tip;
+
+    // 背景音乐提示
+    const tracks = (c.bgm && c.bgm.tracks) ? c.bgm.tracks.length : 0;
+    $("bgmHint").innerHTML = tracks
+      ? `已发现 ${tracks} 首背景音乐，合成时随机挑选一首`
+      : `（<code>assets/bgm/</code> 里还没有音乐文件，加进去就会自动混音）`;
+    if (!tracks && $("useBgm")) $("useBgm").checked = false;
   } catch (e) { /* 忽略 */ }
 })();
+
+/* 每幕的音色下拉：默认按角色自动分配 */
+function voiceOptions(speaker) {
+  const autoLabel = speaker ? `🎭 按角色（${esc(speaker)}）` : "🎭 按角色自动";
+  return `<option value="">${autoLabel}</option>` +
+    VOICE_LIST.map(v => `<option value="${v.id}">${esc(v.label)}</option>`).join("");
+}
 
 async function post(url, body) {
   const r = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
@@ -197,6 +227,10 @@ function renderScenes() {
         <div><label>标题</label><input id="title${i}" value="${esc(s.title)}"></div>
         <div><label>旁白</label><textarea id="narr${i}">${esc(s.narration)}</textarea></div>
         <div><label>台词</label><textarea id="dlg${i}" placeholder="角色台词（可为空）">${esc(s.dialogue)}</textarea></div>
+        <div class="row" style="gap:8px;margin:0 0 8px">
+          <div style="flex:1"><label>说话角色（决定音色）</label><input id="spk${i}" value="${esc(s.speaker || "")}" placeholder="如 林晚 / 旁白"></div>
+          <div style="flex:1"><label>本幕音色</label><select id="voice${i}">${voiceOptions(s.speaker)}</select></div>
+        </div>
         <div><label>画面描述（生图提示词）</label><textarea id="prompt${i}">${esc(s.image_prompt || "")}</textarea></div>
         <div class="scene-actions">
           <button class="btn-ghost" onclick="genImage(${i})">生成图片</button>
@@ -233,9 +267,14 @@ async function genTts(i) {
   const text = ($("narr"+i).value.trim() + " " + $("dlg"+i).value.trim()).trim();
   if (!text) { alert("该幕没有旁白或台词"); return; }
   $("tag"+i).innerHTML = '<span class="spinner"></span>';
+  const speaker = ($("spk"+i) ? $("spk"+i).value : "").trim();
+  // 优先级：本幕指定音色 > 顶部统一音色 > 按角色自动分配（后端解析）
+  const voice = ($("voice"+i) && $("voice"+i).value) || $("voice").value || "";
   try {
-    const j = await post("/api/tts", {project_id: projectId, text, voice: $("voice").value});
-    scenes[i].tts = j.tts; tag(i, true);
+    const j = await post("/api/tts", {project_id: projectId, text, voice, speaker});
+    scenes[i].tts = j.tts; scenes[i].speaker = speaker;
+    tag(i, true);
+    if (j.voice && $("voice"+i)) $("voice"+i).title = "实际使用音色：" + j.voice;
   } catch (e) { $("tag"+i).innerHTML = "❌"; alert(e.message); }
 }
 
@@ -264,11 +303,17 @@ async function composeVideo() {
   scenes.forEach((s, i) => {
     s.title = $("title"+i).value; s.narration = $("narr"+i).value;
     s.dialogue = $("dlg"+i).value; s.image_prompt = $("prompt"+i).value;
+    if ($("spk"+i)) s.speaker = $("spk"+i).value;
   });
+  const missing = scenes.filter(s => !s.image).length;
+  if (missing) { if (!confirm(`还有 ${missing} 幕没有图片，仍要合成吗？`)) return; }
   $("btnCompose").disabled = true;
-  setStatus("status3", "正在合成视频（图片动画 + 配音 + 字幕），请稍候……", true);
+  setStatus("status3", "正在合成视频（图片动画 + 配音 + 背景音乐 + 字幕），请稍候……", true);
   try {
-    const j = await post("/api/compose", {project_id: projectId, scenes, aspect: $("aspect").value});
+    const j = await post("/api/compose", {
+      project_id: projectId, scenes, aspect: $("aspect").value,
+      bgm: $("useBgm").checked ? "" : "none"
+    });
     $("player").src = j.video; $("player").classList.remove("hidden");
     $("dlLink").href = j.video; $("dlLink").classList.remove("hidden");
     setStatus("status3", "🎉 合成完成！");
